@@ -48,6 +48,12 @@ public class DeltaLakeHandleResolver
     }
 
     @Override
+    public Class<? extends ConnectorMergeTableHandle> getMergeTableHandleClass()
+    {
+        return KuduMergeTableHandle.class;
+    }
+
+    @Override
     public Class<? extends ConnectorOutputTableHandle> getOutputTableHandleClass()
     {
         return DeltaLakeOutputTableHandle.class;
