@@ -18,6 +18,7 @@ import io.trino.plugin.hive.HiveTransactionHandle;
 import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ConnectorHandleResolver;
 import io.trino.spi.connector.ConnectorInsertTableHandle;
+import io.trino.spi.connector.ConnectorMergeTableHandle;
 import io.trino.spi.connector.ConnectorOutputTableHandle;
 import io.trino.spi.connector.ConnectorPartitioningHandle;
 import io.trino.spi.connector.ConnectorSplit;
@@ -62,6 +63,12 @@ public class DeltaLakeHandleResolver
     public Class<? extends ConnectorTableExecuteHandle> getTableExecuteHandleClass()
     {
         return DeltaLakeTableExecuteHandle.class;
+    }
+
+    @Override
+    public Class<? extends ConnectorMergeTableHandle> getMergeTableHandleClass()
+    {
+        return HiveMergeTableHandle.class;
     }
 
     @Override
