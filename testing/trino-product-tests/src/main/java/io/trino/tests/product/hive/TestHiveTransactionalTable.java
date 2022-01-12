@@ -2467,9 +2467,9 @@ public class TestHiveTransactionalTable
     public void testMergeOverManySplits()
     {
         withTemporaryTable("delete_select", true, false, NONE, targetTable -> {
-            onTrino().executeQuery(format("CREATE TABLE %s WITH (transactional = true) AS SELECT * FROM tpch.sf1.orders", targetTable));
+            onTrino().executeQuery(format("CREATE TABLE %s WITH (transactional = true) AS SELECT * FROM tpch.tiny.orders WHERE orderkey <= 9200", targetTable));
 
-            String sql = format("MERGE INTO %s t USING (SELECT * FROM tpch.sf1.orders) s ON (t.orderkey = s.orderkey)", targetTable) +
+            String sql = format("MERGE INTO %s t USING (SELECT * FROM tpch.tiny.orders) s ON (t.orderkey = s.orderkey AND s.orderkey <= 9200)", targetTable) +
                     " WHEN MATCHED AND mod(s.orderkey, 3) = 0 THEN UPDATE SET totalprice = t.totalprice + s.totalprice" +
                     " WHEN MATCHED AND mod(s.orderkey, 3) = 1 THEN DELETE";
 

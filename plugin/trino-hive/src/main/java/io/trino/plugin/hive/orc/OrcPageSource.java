@@ -15,6 +15,7 @@ package io.trino.plugin.hive.orc;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.io.Closer;
+import io.airlift.log.Logger;
 import io.trino.memory.context.AggregatedMemoryContext;
 import io.trino.memory.context.LocalMemoryContext;
 import io.trino.orc.OrcCorruptionException;
@@ -33,6 +34,7 @@ import io.trino.spi.block.Block;
 import io.trino.spi.block.LazyBlock;
 import io.trino.spi.block.LazyBlockLoader;
 import io.trino.spi.block.LongArrayBlock;
+import io.trino.spi.block.PageDescriptionUtils;
 import io.trino.spi.block.RunLengthEncodedBlock;
 import io.trino.spi.connector.ConnectorPageSource;
 import io.trino.spi.type.Type;
@@ -63,6 +65,7 @@ import static java.util.Objects.requireNonNull;
 public class OrcPageSource
         implements ConnectorPageSource
 {
+    private static final Logger log = Logger.get(OrcPageSource.class);
     private static final Block ORIGINAL_FILE_TRANSACTION_ID_BLOCK = nativeValueToBlock(BIGINT, 0L);
 
     private final OrcRecordReader recordReader;
@@ -177,7 +180,9 @@ public class OrcPageSource
         MaskDeletedRowsFunction maskDeletedRowsFunction = deletedRows
                 .map(deletedRows -> deletedRows.getMaskDeletedRowsFunction(page, startRowId))
                 .orElseGet(() -> MaskDeletedRowsFunction.noMaskForPage(page));
-        return getColumnAdaptationsPage(page, maskDeletedRowsFunction, recordReader.getFilePosition());
+        Page result = getColumnAdaptationsPage(page, maskDeletedRowsFunction, recordReader.getFilePosition());
+        log.info("Page read: %s", PageDescriptionUtils.describePage(result));
+        return result;
     }
 
     private Page getColumnAdaptationsPage(Page page, MaskDeletedRowsFunction maskDeletedRowsFunction, long filePosition)
