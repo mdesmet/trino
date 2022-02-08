@@ -24,17 +24,22 @@ import io.airlift.configuration.validation.FileExists;
 import io.airlift.units.Duration;
 import io.airlift.units.MinDuration;
 
+import javax.annotation.PostConstruct;
 import javax.validation.constraints.NotNull;
 
 import java.io.File;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
+import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.collect.ImmutableSet.toImmutableSet;
 import static io.trino.server.security.oauth2.OAuth2Service.OPENID_SCOPE;
+import static javax.ws.rs.HttpMethod.GET;
+import static javax.ws.rs.HttpMethod.POST;
 
 public class OAuth2Config
 {
@@ -45,6 +50,7 @@ public class OAuth2Config
     private String tokenUrl;
     private String jwksUrl;
     private Optional<String> userinfoUrl = Optional.empty();
+    private Optional<String> userinfoRequestMethod = Optional.empty();
     private String clientId;
     private String clientSecret;
     private Set<String> scopes = ImmutableSet.of(OPENID_SCOPE);
@@ -148,6 +154,20 @@ public class OAuth2Config
     public OAuth2Config setUserinfoUrl(String userinfoUrl)
     {
         this.userinfoUrl = Optional.ofNullable(userinfoUrl);
+        return this;
+    }
+
+    @NotNull
+    public Optional<String> getUserinfoRequestMethod()
+    {
+        return userinfoRequestMethod;
+    }
+
+    @Config("http-server.authentication.oauth2.userinfo-request-method")
+    @ConfigDescription("userinfo request method")
+    public OAuth2Config setUserinfoRequestMethod(String userinfoRequestMethod)
+    {
+        this.userinfoRequestMethod = Optional.ofNullable(userinfoRequestMethod);
         return this;
     }
 
@@ -275,5 +295,16 @@ public class OAuth2Config
     {
         this.userMappingFile = Optional.ofNullable(userMappingFile);
         return this;
+    }
+
+    @PostConstruct
+    public void validate()
+    {
+        checkState(
+                userinfoRequestMethod.isEmpty() || userinfoUrl.isPresent(),
+                "http-server.authentication.oauth2.userinfo-url must be specified when http-server.authentication.oauth2.userinfo-request-method is specified");
+        checkState(
+                userinfoRequestMethod.isEmpty() || Arrays.asList(GET, POST).contains(userinfoRequestMethod.get()),
+                "http-server.authentication.oauth2.userinfo-request-method must be GET or POST");
     }
 }

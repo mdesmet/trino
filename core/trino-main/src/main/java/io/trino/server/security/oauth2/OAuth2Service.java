@@ -96,6 +96,7 @@ public class OAuth2Service
     private final String accessTokenIssuer;
     private final String clientId;
     private final Optional<URI> userinfoUri;
+    private final Optional<String> userInfoRequestMethod;
     private final Set<String> allowedAudiences;
 
     private final OAuth2TokenHandler tokenHandler;
@@ -125,6 +126,7 @@ public class OAuth2Service
         this.accessTokenIssuer = oauth2Config.getAccessTokenIssuer().orElse(issuer);
         this.clientId = oauth2Config.getClientId();
         this.userinfoUri = oauth2Config.getUserinfoUrl().map(url -> UriBuilder.fromUri(url).build());
+        this.userInfoRequestMethod = oauth2Config.getUserinfoRequestMethod();
         this.allowedAudiences = ImmutableSet.<String>builder()
                 .addAll(oauth2Config.getAdditionalAudiences())
                 .add(clientId)
@@ -333,7 +335,7 @@ public class OAuth2Service
         if (userinfoUri.isPresent()) {
             // validate access token is trusted by remote userinfo endpoint
             Request request = Request.builder()
-                    .setMethod(POST)
+                    .setMethod(userInfoRequestMethod.orElse(POST))
                     .addHeader(AUTHORIZATION, "Bearer " + accessToken)
                     .setUri(userinfoUri.get())
                     .build();
