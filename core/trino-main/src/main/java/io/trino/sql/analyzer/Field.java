@@ -19,6 +19,7 @@ import io.trino.sql.tree.QualifiedName;
 
 import java.util.Optional;
 
+import static java.util.Locale.ENGLISH;
 import static java.util.Objects.requireNonNull;
 
 public class Field
@@ -75,7 +76,7 @@ public class Field
         requireNonNull(originColumnName, "originColumnName is null");
 
         this.relationAlias = relationAlias;
-        this.name = name;
+        this.name = name.map(value -> value.toLowerCase(ENGLISH));
         this.type = type;
         this.hidden = hidden;
         this.originTable = originTable;
