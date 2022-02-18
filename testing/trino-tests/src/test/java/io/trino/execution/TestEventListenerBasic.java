@@ -715,6 +715,17 @@ public class TestEventListenerBasic
     }
 
     @Test
+    public void testOutputColumnsForSelectWithQuotedColumns()
+            throws Exception
+    {
+        assertLineage(
+                "SELECT clerk AS \"Test_varchar\", orderkey AS \"Test_bigint\" FROM orders",
+                ImmutableSet.of("tpch.tiny.orders"),
+                new OutputColumnMetadata("test_varchar", VARCHAR_TYPE, ImmutableSet.of(new ColumnDetail("tpch", "tiny", "orders", "clerk"))),
+                new OutputColumnMetadata("test_bigint", BIGINT_TYPE, ImmutableSet.of(new ColumnDetail("tpch", "tiny", "orders", "orderkey"))));
+    }
+
+    @Test
     public void testOutputColumnsForSelectWithConstantExpression()
             throws Exception
     {
