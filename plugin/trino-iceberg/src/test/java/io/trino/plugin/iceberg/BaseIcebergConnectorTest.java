@@ -2715,7 +2715,7 @@ public abstract class BaseIcebergConnectorTest
                                 (format == ORC ?
                                         "  CAST(ROW(NULL, NULL, 1) AS ROW(min uuid, max uuid, null_count bigint)) " :
                                         "  CAST(ROW(UUID '20050910-1330-11e9-ffff-2a86e4085a59', UUID '20050910-1330-11e9-ffff-2a86e4085a59', 1) AS ROW(min uuid, max uuid, null_count bigint)) "
-                                        ) +
+                                ) +
                                 ")");
 
         assertUpdate("DROP TABLE test_all_types");
@@ -2915,8 +2915,8 @@ public abstract class BaseIcebergConnectorTest
             String tableName = table.getName();
             String values =
                     Stream.concat(
-                            nCopies(100, testSetup.getSampleValueLiteral()).stream(),
-                            nCopies(100, testSetup.getHighValueLiteral()).stream())
+                                    nCopies(100, testSetup.getSampleValueLiteral()).stream(),
+                                    nCopies(100, testSetup.getHighValueLiteral()).stream())
                             .map(value -> "(" + value + ", rand())")
                             .collect(Collectors.joining(", "));
             assertUpdate(withSmallRowGroups(getSession()), "INSERT INTO " + tableName + " VALUES " + values, 200);

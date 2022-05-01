@@ -47,6 +47,14 @@ public class TestPartitionFields
         assertParse("truncate(comment, 13)", partitionSpec(builder -> builder.truncate("comment", 13)));
         assertParse("truncate(order_key, 88)", partitionSpec(builder -> builder.truncate("order_key", 88)));
         assertParse("void(order_key)", partitionSpec(builder -> builder.alwaysNull("order_key")));
+        assertParse("\"quoted field\"", partitionSpec(builder -> builder.identity("quoted field")));
+        assertParse("year(\"quoted ts\")", partitionSpec(builder -> builder.year("quoted ts")));
+        assertParse("month(\"quoted ts\")", partitionSpec(builder -> builder.month("quoted ts")));
+        assertParse("day(\"quoted ts\")", partitionSpec(builder -> builder.day("quoted ts")));
+        assertParse("hour(\"quoted ts\")", partitionSpec(builder -> builder.hour("quoted ts")));
+        assertParse("bucket(\"quoted field\", 42)", partitionSpec(builder -> builder.bucket("quoted field", 42)));
+        assertParse("truncate(\"quoted field\", 13)", partitionSpec(builder -> builder.truncate("quoted field", 13)));
+        assertParse("void(\"quoted field\")", partitionSpec(builder -> builder.alwaysNull("quoted field")));
 
         assertInvalid("bucket()", "Invalid partition field declaration: bucket()");
         assertInvalid("abc", "Cannot find source column: abc");
@@ -86,7 +94,9 @@ public class TestPartitionFields
                 NestedField.required(2, "ts", TimestampType.withoutZone()),
                 NestedField.required(3, "price", DoubleType.get()),
                 NestedField.optional(4, "comment", StringType.get()),
-                NestedField.optional(5, "notes", ListType.ofRequired(6, StringType.get())));
+                NestedField.optional(5, "notes", ListType.ofRequired(6, StringType.get())),
+                NestedField.optional(7, "quoted field", StringType.get()),
+                NestedField.optional(8, "quoted ts", TimestampType.withoutZone()));
 
         PartitionSpec.Builder builder = PartitionSpec.builderFor(schema);
         consumer.accept(builder);

@@ -29,10 +29,13 @@ import static java.lang.String.format;
 
 public final class PartitionFields
 {
-    private static final String NAME = "[a-z_][a-z0-9_]*";
+    private static final String IDENTIFIER = "[[a-z]_][[a-z0-9]_]*";
+    private static final String QUOTED_IDENTIFIER = "(?:\"[^\"]*\")+";
+    private static final String NAME = IDENTIFIER + "|" + QUOTED_IDENTIFIER;
     private static final String FUNCTION_ARGUMENT_NAME = "\\((" + NAME + ")\\)";
     private static final String FUNCTION_ARGUMENT_NAME_AND_INT = "\\((" + NAME + "), *(\\d+)\\)";
 
+    private static final Pattern IDENTIFIER_PATTERN = Pattern.compile(IDENTIFIER);
     private static final Pattern IDENTITY_PATTERN = Pattern.compile(NAME);
     private static final Pattern YEAR_PATTERN = Pattern.compile("year" + FUNCTION_ARGUMENT_NAME);
     private static final Pattern MONTH_PATTERN = Pattern.compile("month" + FUNCTION_ARGUMENT_NAME);
@@ -56,18 +59,34 @@ public final class PartitionFields
         return builder.build();
     }
 
+    private static String fromIdentifier(String identifier)
+    {
+        if (identifier.startsWith("\"") && identifier.endsWith("\"")) {
+            return identifier.substring(1, identifier.length() - 1).replace("\"\"", "\"");
+        }
+        return identifier;
+    }
+
+    private static String toIdentifier(String column)
+    {
+        if (IDENTIFIER_PATTERN.matcher(column).matches()) {
+            return column;
+        }
+        return "\"" + column.replace("\"", "\"\"") + "\"";
+    }
+
     public static void parsePartitionField(PartitionSpec.Builder builder, String field)
     {
         @SuppressWarnings("PointlessBooleanExpression")
         boolean matched = false ||
-                tryMatch(field, IDENTITY_PATTERN, match -> builder.identity(match.group())) ||
-                tryMatch(field, YEAR_PATTERN, match -> builder.year(match.group(1))) ||
-                tryMatch(field, MONTH_PATTERN, match -> builder.month(match.group(1))) ||
-                tryMatch(field, DAY_PATTERN, match -> builder.day(match.group(1))) ||
-                tryMatch(field, HOUR_PATTERN, match -> builder.hour(match.group(1))) ||
-                tryMatch(field, BUCKET_PATTERN, match -> builder.bucket(match.group(1), parseInt(match.group(2)))) ||
-                tryMatch(field, TRUNCATE_PATTERN, match -> builder.truncate(match.group(1), parseInt(match.group(2)))) ||
-                tryMatch(field, VOID_PATTERN, match -> builder.alwaysNull(match.group(1))) ||
+                tryMatch(field, IDENTITY_PATTERN, match -> builder.identity(fromIdentifier(match.group()))) ||
+                tryMatch(field, YEAR_PATTERN, match -> builder.year(fromIdentifier(match.group(1)))) ||
+                tryMatch(field, MONTH_PATTERN, match -> builder.month(fromIdentifier(match.group(1)))) ||
+                tryMatch(field, DAY_PATTERN, match -> builder.day(fromIdentifier(match.group(1)))) ||
+                tryMatch(field, HOUR_PATTERN, match -> builder.hour(fromIdentifier(match.group(1)))) ||
+                tryMatch(field, BUCKET_PATTERN, match -> builder.bucket(fromIdentifier(match.group(1)), parseInt(match.group(2)))) ||
+                tryMatch(field, TRUNCATE_PATTERN, match -> builder.truncate(fromIdentifier(match.group(1)), parseInt(match.group(2)))) ||
+                tryMatch(field, VOID_PATTERN, match -> builder.alwaysNull(fromIdentifier(match.group(1)))) ||
                 false;
         if (!matched) {
             throw new IllegalArgumentException("Invalid partition field declaration: " + field);
@@ -93,7 +112,7 @@ public final class PartitionFields
 
     private static String toPartitionField(PartitionSpec spec, PartitionField field)
     {
-        String name = spec.schema().findColumnName(field.sourceId());
+        String name = toIdentifier(spec.schema().findColumnName(field.sourceId()));
         String transform = field.transform().toString();
 
         switch (transform) {
