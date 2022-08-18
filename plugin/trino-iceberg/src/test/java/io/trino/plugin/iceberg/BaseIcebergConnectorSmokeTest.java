@@ -164,6 +164,49 @@ public abstract class BaseIcebergConnectorSmokeTest
     }
 
     @Test
+    public void testCreateOrReplaceTable()
+    {
+        String tableName = "test_create_or_replace_" + randomNameSuffix();
+        assertUpdate("CREATE TABLE " + tableName + " AS SELECT BIGINT '42' a, DOUBLE '-38.5' b", 1);
+        assertThat(query("SELECT CAST(a AS bigint), b FROM " + tableName))
+                .matches("VALUES (BIGINT '42', -385e-1)");
+
+        long v1SnapshotId = getMostRecentSnapshotId(tableName);
+
+        assertUpdate("CREATE OR REPLACE TABLE " + tableName + " AS SELECT BIGINT '-42' a, DOUBLE '38.5' b", 1);
+        assertThat(query("SELECT CAST(a AS bigint), b FROM " + tableName))
+                .matches("VALUES (BIGINT '-42', 385e-1)");
+
+        assertThat(query("SELECT COUNT(snapshot_id) FROM \"" + tableName + "$history\""))
+                .matches("VALUES BIGINT '2'");
+
+        assertThat(query("SELECT a, b  FROM " + tableName + " FOR VERSION AS OF " + v1SnapshotId))
+                .matches("VALUES (BIGINT '42', -385e-1)");
+
+        assertUpdate("DROP TABLE " + tableName);
+    }
+
+    @Test
+    public void testCreateOrReplaceTableChangeColumnNamesAndTypes()
+    {
+        String tableName = "test_create_or_replace_" + randomNameSuffix();
+        assertUpdate("CREATE TABLE " + tableName + " AS SELECT BIGINT '42' a, DOUBLE '-38.5' b", 1);
+        assertThat(query("SELECT CAST(a AS bigint), b FROM " + tableName))
+                .matches("VALUES (BIGINT '42', -385e-1)");
+
+        long v1SnapshotId = getMostRecentSnapshotId(tableName);
+
+        assertUpdate("CREATE OR REPLACE TABLE " + tableName + " AS SELECT VARCHAR 'test' c, VARCHAR 'test2' d", 1);
+        assertThat(query("SELECT c, d FROM " + tableName))
+                .matches("VALUES (VARCHAR 'test', VARCHAR 'test2')");
+
+        assertThat(query("SELECT a, b  FROM " + tableName + " FOR VERSION AS OF " + v1SnapshotId))
+                .matches("VALUES (BIGINT '42', -385e-1)");
+
+        assertUpdate("DROP TABLE " + tableName);
+    }
+
+    @Test
     public void testRegisterTableWithTableLocation()
     {
         String tableName = "test_register_table_with_table_location_" + randomNameSuffix();
