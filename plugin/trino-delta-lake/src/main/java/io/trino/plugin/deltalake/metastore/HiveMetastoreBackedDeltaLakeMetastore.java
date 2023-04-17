@@ -119,6 +119,11 @@ public class HiveMetastoreBackedDeltaLakeMetastore
         delegate.dropTable(schemaTableName.getSchemaName(), schemaTableName.getTableName(), deleteData);
     }
 
+    public void replaceTable(ConnectorSession session, Table table, PrincipalPrivileges principalPrivileges)
+    {
+        delegate.replaceTable(table.getDatabaseName(), table.getTableName(), table, principalPrivileges);
+    }
+
     @Override
     public void renameTable(ConnectorSession session, SchemaTableName from, SchemaTableName to)
     {

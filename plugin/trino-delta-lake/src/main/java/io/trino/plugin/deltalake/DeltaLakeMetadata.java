@@ -102,6 +102,7 @@ import io.trino.spi.connector.ConstraintApplicationResult;
 import io.trino.spi.connector.ProjectionApplicationResult;
 import io.trino.spi.connector.RetryMode;
 import io.trino.spi.connector.RowChangeParadigm;
+import io.trino.spi.connector.SaveMode;
 import io.trino.spi.connector.SchemaNotFoundException;
 import io.trino.spi.connector.SchemaTableName;
 import io.trino.spi.connector.SchemaTablePrefix;
@@ -270,6 +271,7 @@ import static io.trino.spi.StandardErrorCode.NOT_SUPPORTED;
 import static io.trino.spi.StandardErrorCode.QUERY_REJECTED;
 import static io.trino.spi.connector.RetryMode.NO_RETRIES;
 import static io.trino.spi.connector.RowChangeParadigm.DELETE_ROW_AND_INSERT_ROW;
+import static io.trino.spi.connector.SaveMode.REPLACE;
 import static io.trino.spi.connector.SchemaTableName.schemaTableName;
 import static io.trino.spi.predicate.Range.greaterThanOrEqual;
 import static io.trino.spi.predicate.Range.lessThanOrEqual;
@@ -296,6 +298,7 @@ import static io.trino.spi.type.VarbinaryType.VARBINARY;
 import static io.trino.spi.type.VarcharType.VARCHAR;
 import static java.lang.String.format;
 import static java.time.Instant.EPOCH;
+import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static java.util.Collections.unmodifiableMap;
 import static java.util.Comparator.naturalOrder;
@@ -318,6 +321,8 @@ public class DeltaLakeMetadata
             HIVE_SEQUENCEFILE_OUTPUT_FORMAT_CLASS);
     public static final String CREATE_TABLE_AS_OPERATION = "CREATE TABLE AS SELECT";
     public static final String CREATE_TABLE_OPERATION = "CREATE TABLE";
+    public static final String CREATE_OR_REPLACE_TABLE_OPERATION = "CREATE OR REPLACE TABLE";
+    public static final String CREATE_OR_REPLACE_TABLE_AS_OPERATION = "CREATE OR REPLACE TABLE AS SELECT";
     public static final String ADD_COLUMN_OPERATION = "ADD COLUMNS";
     public static final String DROP_COLUMN_OPERATION = "DROP COLUMNS";
     public static final String RENAME_COLUMN_OPERATION = "RENAME COLUMN";
@@ -854,7 +859,7 @@ public class DeltaLakeMetadata
     }
 
     @Override
-    public void createTable(ConnectorSession session, ConnectorTableMetadata tableMetadata, boolean ignoreExisting)
+    public void createTable(ConnectorSession session, ConnectorTableMetadata tableMetadata, SaveMode saveMode)
     {
         SchemaTableName schemaTableName = tableMetadata.getTable();
         String schemaName = schemaTableName.getSchemaName();
@@ -862,8 +867,18 @@ public class DeltaLakeMetadata
 
         Database schema = metastore.getDatabase(schemaName).orElseThrow(() -> new SchemaNotFoundException(schemaName));
 
+        DeltaLakeTableHandle handle = (DeltaLakeTableHandle) getTableHandle(session, tableMetadata.getTable());
+        boolean replaceExistingTable = saveMode == REPLACE && handle != null;
+
         boolean external = true;
         String location = getLocation(tableMetadata.getProperties());
+        if (replaceExistingTable) {
+            String currentLocation = getLocation(getTableMetadata(session, handle).getProperties());
+            if (location != null && !location.equals(currentLocation)) {
+                throw new TrinoException(DELTA_LAKE_INVALID_SCHEMA, format("The provided location '%s' does not match the existing table location '%s'", location, currentLocation));
+            }
+            location = currentLocation;
+        }
         if (location == null) {
             location = getTableLocation(schema, tableName);
             checkPathContainsNoFiles(session, Location.of(location));
@@ -874,10 +889,20 @@ public class DeltaLakeMetadata
         Optional<Boolean> changeDataFeedEnabled = getChangeDataFeedEnabled(tableMetadata.getProperties());
         ColumnMappingMode columnMappingMode = DeltaLakeTableProperties.getColumnMappingMode(tableMetadata.getProperties());
         AtomicInteger fieldId = new AtomicInteger();
+        if (replaceExistingTable && changeDataFeedEnabled.orElse(false)) {
+            throw new TrinoException(NOT_SUPPORTED, "CREATE OR REPLACE is not supported for tables with change data feed enabled");
+        }
+
+        List<AddFileEntry> activeFiles = emptyList();
+        long commitVersion = 0;
+        if (replaceExistingTable) {
+            activeFiles = transactionLogAccess.getActiveFiles(getSnapshot(session, schemaTableName(schemaName, tableName), location, Optional.empty()), session);
+            commitVersion = getSnapshot(session, schemaTableName(schemaName, tableName), location, Optional.empty()).getVersion() + 1;
+        }
 
         try {
             TrinoFileSystem fileSystem = fileSystemFactory.create(session);
-            if (!fileSystem.listFiles(deltaLogDirectory).hasNext()) {
+            if (!fileSystem.listFiles(deltaLogDirectory).hasNext() || replaceExistingTable) {
                 validateTableColumns(tableMetadata);
 
                 List<String> partitionColumns = getPartitionedBy(tableMetadata.getProperties());
@@ -905,7 +930,7 @@ public class DeltaLakeMetadata
 
                 TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriterWithoutTransactionIsolation(session, location);
                 appendTableEntries(
-                        0,
+                        commitVersion,
                         transactionLogWriter,
                         randomUUID().toString(),
                         columnNames.build(),
@@ -915,12 +940,18 @@ public class DeltaLakeMetadata
                         columnsNullability,
                         columnsMetadata.buildOrThrow(),
                         configurationForNewTable(checkpointInterval, changeDataFeedEnabled, columnMappingMode, maxFieldId),
-                        CREATE_TABLE_OPERATION,
+                        saveMode == REPLACE ? CREATE_OR_REPLACE_TABLE_OPERATION : CREATE_TABLE_OPERATION,
                         session,
                         tableMetadata.getComment(),
                         protocolEntryForNewTable(containsTimestampType, tableMetadata.getProperties()));
 
-                setRollback(() -> deleteRecursivelyIfExists(fileSystem, deltaLogDirectory));
+                if (!replaceExistingTable) {
+                    setRollback(() -> deleteRecursivelyIfExists(fileSystem, deltaLogDirectory));
+                }
+                long writeTimestamp = Instant.now().toEpochMilli();
+                for (AddFileEntry file : activeFiles) {
+                    transactionLogWriter.appendRemoveFileEntry(new RemoveFileEntry(file.getPath(), writeTimestamp, true));
+                }
                 transactionLogWriter.flush();
             }
             else {
@@ -950,19 +981,24 @@ public class DeltaLakeMetadata
         // As a precaution, clear the caches
         statisticsAccess.invalidateCache(schemaTableName, Optional.of(location));
         transactionLogAccess.invalidateCache(schemaTableName, Optional.of(location));
-        try {
-            metastore.createTable(
-                    session,
-                    table,
-                    principalPrivileges);
+        if (replaceExistingTable) {
+            metastore.replaceTable(session, table, principalPrivileges);
         }
-        catch (TableAlreadyExistsException e) {
-            // Ignore TableAlreadyExistsException when table looks like created by us.
-            // This may happen when an actually successful metastore create call is retried
-            // e.g. because of a timeout on our side.
-            Optional<Table> existingTable = metastore.getRawMetastoreTable(schemaName, tableName);
-            if (existingTable.isEmpty() || !isCreatedBy(existingTable.get(), queryId)) {
-                throw e;
+        else {
+            try {
+                metastore.createTable(
+                        session,
+                        table,
+                        principalPrivileges);
+            }
+            catch (TableAlreadyExistsException e) {
+                // Ignore TableAlreadyExistsException when table looks like created by us.
+                // This may happen when an actually successful metastore create call is retried
+                // e.g. because of a timeout on our side.
+                Optional<Table> existingTable = metastore.getRawMetastoreTable(schemaName, tableName);
+                if (existingTable.isEmpty() || !isCreatedBy(existingTable.get(), queryId)) {
+                    throw e;
+                }
             }
         }
     }
@@ -1010,7 +1046,7 @@ public class DeltaLakeMetadata
     }
 
     @Override
-    public DeltaLakeOutputTableHandle beginCreateTable(ConnectorSession session, ConnectorTableMetadata tableMetadata, Optional<ConnectorTableLayout> layout, RetryMode retryMode)
+    public DeltaLakeOutputTableHandle beginCreateTable(ConnectorSession session, ConnectorTableMetadata tableMetadata, Optional<ConnectorTableLayout> layout, RetryMode retryMode, boolean replace)
     {
         validateTableColumns(tableMetadata);
 
@@ -1021,8 +1057,18 @@ public class DeltaLakeMetadata
         Database schema = metastore.getDatabase(schemaName).orElseThrow(() -> new SchemaNotFoundException(schemaName));
         List<String> partitionedBy = getPartitionedBy(tableMetadata.getProperties());
 
+        DeltaLakeTableHandle handle = (DeltaLakeTableHandle) getTableHandle(session, tableMetadata.getTable());
+        boolean replaceExistingTable = replace && handle != null;
+
         boolean external = true;
         String location = getLocation(tableMetadata.getProperties());
+        if (replaceExistingTable) {
+            String currentLocation = getLocation(getTableMetadata(session, handle).getProperties());
+            if (location != null && !location.equals(currentLocation)) {
+                throw new TrinoException(DELTA_LAKE_INVALID_SCHEMA, format("The provided location '%s' does not match the existing table location '%s'", location, currentLocation));
+            }
+            location = currentLocation;
+        }
         if (location == null) {
             location = getTableLocation(schema, tableName);
             external = false;
@@ -1032,8 +1078,10 @@ public class DeltaLakeMetadata
         AtomicInteger fieldId = new AtomicInteger();
 
         Location finalLocation = Location.of(location);
-        checkPathContainsNoFiles(session, finalLocation);
-        setRollback(() -> deleteRecursivelyIfExists(fileSystemFactory.create(session), finalLocation));
+        if (!replaceExistingTable) {
+            checkPathContainsNoFiles(session, finalLocation);
+            setRollback(() -> deleteRecursivelyIfExists(fileSystemFactory.create(session), finalLocation));
+        }
 
         boolean usePhysicalName = columnMappingMode == ID || columnMappingMode == NAME;
         boolean containsTimestampType = false;
@@ -1083,6 +1131,9 @@ public class DeltaLakeMetadata
         if (columnMappingMode == ID || columnMappingMode == NAME) {
             maxFieldId = OptionalInt.of(fieldId.get());
         }
+        if (replaceExistingTable && getChangeDataFeedEnabled(tableMetadata.getProperties()).orElse(false)) {
+            throw new TrinoException(NOT_SUPPORTED, "CREATE OR REPLACE AS SELECT is not supported for tables with change data feed enabled");
+        }
 
         return new DeltaLakeOutputTableHandle(
                 schemaName,
@@ -1096,7 +1147,10 @@ public class DeltaLakeMetadata
                 schemaString,
                 columnMappingMode,
                 maxFieldId,
-                protocolEntryForNewTable(containsTimestampType, tableMetadata.getProperties()));
+                protocolEntryForNewTable(containsTimestampType, tableMetadata.getProperties()),
+                configurationForNewTable(getCheckpointInterval(tableMetadata.getProperties()), getChangeDataFeedEnabled(tableMetadata.getProperties()), columnMappingMode, maxFieldId),
+                replace ? CREATE_OR_REPLACE_TABLE_AS_OPERATION : CREATE_TABLE_AS_OPERATION,
+                replaceExistingTable);
     }
 
     private Optional<String> getSchemaLocation(Database database)
@@ -1234,30 +1288,44 @@ public class DeltaLakeMetadata
                 .filter(column -> column.getColumnType() == PARTITION_KEY)
                 .map(DeltaLakeColumnHandle::getBasePhysicalColumnName)
                 .collect(toImmutableList());
+
+        boolean replaceExistingTable = handle.isReplaceExistingTable();
+        List<AddFileEntry> activeFiles = emptyList();
+        long commitVersion = 0;
+        if (replaceExistingTable) {
+            activeFiles = transactionLogAccess.getActiveFiles(getSnapshot(session, handle), session);
+            commitVersion = getSnapshot(session, handle).getVersion() + 1;
+        }
+
         try {
             // For CTAS there is no risk of multiple writers racing. Using writer without transaction isolation so we are not limiting support for CTAS to
             // filesystems for which we have proper implementations of TransactionLogSynchronizers.
             TransactionLogWriter transactionLogWriter = transactionLogWriterFactory.newWriterWithoutTransactionIsolation(session, handle.getLocation());
 
             appendTableEntries(
-                    0,
+                    commitVersion,
                     transactionLogWriter,
                     randomUUID().toString(),
                     schemaString,
                     handle.getPartitionedBy(),
                     configurationForNewTable(handle.getCheckpointInterval(), handle.getChangeDataFeedEnabled(), columnMappingMode, handle.getMaxColumnId()),
-                    CREATE_TABLE_AS_OPERATION,
+                    //handle.getConfiguration(), // TODO
+                    handle.getOperation(),
                     session,
                     handle.getComment(),
                     handle.getProtocolEntry());
             appendAddFileEntries(transactionLogWriter, dataFileInfos, physicalPartitionNames, columnNames, true);
+            long writeTimestamp = Instant.now().toEpochMilli();
+            for (AddFileEntry file : activeFiles) {
+                transactionLogWriter.appendRemoveFileEntry(new RemoveFileEntry(file.getPath(), writeTimestamp, true));
+            }
             transactionLogWriter.flush();
 
             if (isCollectExtendedStatisticsColumnStatisticsOnWrite(session) && !computedStatistics.isEmpty()) {
                 Optional<Instant> maxFileModificationTime = dataFileInfos.stream()
                         .map(DataFileInfo::getCreationTime)
                         .max(Long::compare)
-                        .map(Instant::ofEpochMilli);
+                        .map(Instant::ofEpochMilli);  // TODO: max with write timestamp?
                 Map<String, String> physicalColumnMapping = DeltaLakeSchemaSupport.getColumnMetadata(schemaString, typeManager, columnMappingMode).stream()
                         .map(e -> Map.entry(e.getName(), e.getPhysicalName()))
                         .collect(toImmutableMap(Entry::getKey, Entry::getValue));
@@ -1278,24 +1346,31 @@ public class DeltaLakeMetadata
             // As a precaution, clear the caches
             statisticsAccess.invalidateCache(schemaTableName, Optional.of(location));
             transactionLogAccess.invalidateCache(schemaTableName, Optional.of(location));
-            try {
-                metastore.createTable(session, table, principalPrivileges);
+            if (handle.isReplaceExistingTable()) {
+                metastore.replaceTable(session, table, principalPrivileges);
             }
-            catch (TableAlreadyExistsException e) {
-                // Ignore TableAlreadyExistsException when table looks like created by us.
-                // This may happen when an actually successful metastore create call is retried
-                // e.g. because of a timeout on our side.
-                Optional<Table> existingTable = metastore.getRawMetastoreTable(schemaName, tableName);
-                if (existingTable.isEmpty() || !isCreatedBy(existingTable.get(), queryId)) {
-                    throw e;
+            else {
+                try {
+                    metastore.createTable(session, table, principalPrivileges);
+                }
+                catch (TableAlreadyExistsException e) {
+                    // Ignore TableAlreadyExistsException when table looks like created by us.
+                    // This may happen when an actually successful metastore create call is retried
+                    // e.g. because of a timeout on our side.
+                    Optional<Table> existingTable = metastore.getRawMetastoreTable(schemaName, tableName);
+                    if (existingTable.isEmpty() || !isCreatedBy(existingTable.get(), queryId)) {
+                        throw e;
+                    }
                 }
             }
         }
         catch (Exception e) {
             // Remove the transaction log entry if the table creation fails
             try {
-                Location transactionLogDir = Location.of(getTransactionLogDir(location));
-                fileSystemFactory.create(session).deleteDirectory(transactionLogDir);
+                if (!replaceExistingTable) {
+                    Location transactionLogDir = Location.of(getTransactionLogDir(location));
+                    fileSystemFactory.create(session).deleteDirectory(transactionLogDir);
+                }
             }
             catch (IOException ioException) {
                 // Nothing to do, the IOException is probably the same reason why the initial write failed
@@ -2286,6 +2361,11 @@ public class DeltaLakeMetadata
     private TableSnapshot getSnapshot(ConnectorSession session, DeltaLakeTableHandle table)
     {
         return getSnapshot(session, table.getSchemaTableName(), table.getLocation(), Optional.of(table.getReadVersion()));
+    }
+
+    private TableSnapshot getSnapshot(ConnectorSession session, DeltaLakeOutputTableHandle table)
+    {
+        return getSnapshot(session, table.getSchemaTableName(), table.getLocation(), Optional.empty());
     }
 
     private TableSnapshot getSnapshot(ConnectorSession session, SchemaTableName schemaTableName, String tableLocation, Optional<Long> atVersion)

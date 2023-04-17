@@ -42,5 +42,7 @@ public interface DeltaLakeMetastore
 
     void dropTable(ConnectorSession session, SchemaTableName schemaTableName, String tableLocation, boolean deleteData);
 
+    void replaceTable(ConnectorSession session, Table table, PrincipalPrivileges principalPrivileges);
+
     void renameTable(ConnectorSession session, SchemaTableName from, SchemaTableName to);
 }

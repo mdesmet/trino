@@ -20,8 +20,10 @@ import com.google.common.collect.ImmutableList;
 import io.trino.plugin.deltalake.transactionlog.DeltaLakeSchemaSupport.ColumnMappingMode;
 import io.trino.plugin.deltalake.transactionlog.ProtocolEntry;
 import io.trino.spi.connector.ConnectorOutputTableHandle;
+import io.trino.spi.connector.SchemaTableName;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 
@@ -44,6 +46,9 @@ public class DeltaLakeOutputTableHandle
     private final OptionalInt maxColumnId;
     private final String schemaString;
     private final ProtocolEntry protocolEntry;
+    private final Map<String, String> configuration;
+    private final String operation;
+    private final boolean replaceExistingTable;
 
     @JsonCreator
     public DeltaLakeOutputTableHandle(
@@ -58,7 +63,10 @@ public class DeltaLakeOutputTableHandle
             @JsonProperty("schemaString") String schemaString,
             @JsonProperty("columnMappingMode") ColumnMappingMode columnMappingMode,
             @JsonProperty("maxColumnId") OptionalInt maxColumnId,
-            @JsonProperty("protocolEntry") ProtocolEntry protocolEntry)
+            @JsonProperty("protocolEntry") ProtocolEntry protocolEntry,
+            @JsonProperty("configuration") Map<String, String> configuration,
+            @JsonProperty("operation") String operation,
+            @JsonProperty("replaceExistingTable") boolean replaceExistingTable)
     {
         this.schemaName = requireNonNull(schemaName, "schemaName is null");
         this.tableName = requireNonNull(tableName, "tableName is null");
@@ -72,6 +80,19 @@ public class DeltaLakeOutputTableHandle
         this.columnMappingMode = requireNonNull(columnMappingMode, "columnMappingMode is null");
         this.maxColumnId = requireNonNull(maxColumnId, "maxColumnId is null");
         this.protocolEntry = requireNonNull(protocolEntry, "protocolEntry is null");
+        this.configuration = configuration;
+        this.operation = operation;
+        this.replaceExistingTable = replaceExistingTable;
+    }
+
+    public SchemaTableName schemaTableName()
+    {
+        return getSchemaTableName();
+    }
+
+    public SchemaTableName getSchemaTableName()
+    {
+        return new SchemaTableName(schemaName, tableName);
     }
 
     @JsonProperty
@@ -153,5 +174,23 @@ public class DeltaLakeOutputTableHandle
     public ProtocolEntry getProtocolEntry()
     {
         return protocolEntry;
+    }
+
+    @JsonProperty
+    public Map<String, String> getConfiguration()
+    {
+        return configuration;
+    }
+
+    @JsonProperty
+    public String getOperation()
+    {
+        return operation;
+    }
+
+    @JsonProperty
+    public boolean isReplaceExistingTable()
+    {
+        return replaceExistingTable;
     }
 }

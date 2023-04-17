@@ -240,6 +240,7 @@ public abstract class BaseDeltaLakeConnectorSmokeTest
         return switch (connectorBehavior) {
             case SUPPORTS_CREATE_MATERIALIZED_VIEW,
                     SUPPORTS_RENAME_SCHEMA -> false;
+            case SUPPORTS_CREATE_OR_REPLACE_TABLE -> true;
             default -> super.hasBehavior(connectorBehavior);
         };
     }
@@ -417,6 +418,165 @@ public abstract class BaseDeltaLakeConnectorSmokeTest
         finally {
             assertUpdate("DROP TABLE " + tableName);
         }
+    }
+
+    @Test
+    public void testCreateOrReplaceTableAsSelect()
+    {
+        String tableName = "test_create_or_replace_" + randomNameSuffix();
+        assertUpdate("CREATE TABLE " + tableName + " AS SELECT BIGINT '42' a, DOUBLE '-38.5' b", 1);
+        assertThat(query("SELECT CAST(a AS bigint), b FROM " + tableName))
+                .matches("VALUES (BIGINT '42', -385e-1)");
+
+        assertUpdate("CREATE OR REPLACE TABLE " + tableName + " AS SELECT BIGINT '-53' a, DOUBLE '49.6' b", 1);
+        assertThat(query("SELECT CAST(a AS bigint), b FROM " + tableName))
+                .matches("VALUES (BIGINT '-53', 496e-1)");
+
+        assertEquals(1L, getTableVersion(tableName));
+
+        assertUpdate("DROP TABLE " + tableName);
+    }
+
+    @Test
+    public void testCreateOrReplaceTableAsSelectChangeColumnNamesAndTypes()
+    {
+        String tableName = "test_create_or_replace_" + randomNameSuffix();
+        assertUpdate("CREATE TABLE " + tableName + " AS SELECT BIGINT '42' a, DOUBLE '-38.5' b", 1);
+        assertThat(query("SELECT CAST(a AS bigint), b FROM " + tableName))
+                .matches("VALUES (BIGINT '42', -385e-1)");
+
+        assertUpdate("CREATE OR REPLACE TABLE " + tableName + " AS SELECT CAST(ARRAY[ROW('test')] AS ARRAY(ROW(field VARCHAR)))  a, VARCHAR 'test2' b", 1);
+        assertThat(query("SELECT a, b FROM " + tableName))
+                .matches("VALUES (CAST(ARRAY[ROW('test')] AS ARRAY(ROW(field VARCHAR))), VARCHAR 'test2')");
+
+        assertEquals(1L, getTableVersion(tableName));
+
+        assertUpdate("DROP TABLE " + tableName);
+    }
+
+    @Test
+    public void testCreateOrReplaceTableAsSelectMetastoreUpdate()
+    {
+        String tableName = "test_create_or_replace_metastore_update" + randomNameSuffix();
+        assertUpdate("CREATE TABLE " + tableName + " AS SELECT BIGINT '42' a, DOUBLE '-38.5' b", 1);
+        assertThat(query("SELECT CAST(a AS bigint), b FROM " + tableName))
+                .matches("VALUES (BIGINT '42', -385e-1)");
+
+        String queryId = metastore.getTable(SCHEMA, tableName).map(x -> x.getParameters().get("presto_query_id")).orElseThrow();
+
+        assertUpdate("CREATE OR REPLACE TABLE " + tableName + " AS SELECT 'hello' a, INTEGER '2' b", 1);
+        assertThat(query("SELECT a, b FROM " + tableName))
+                .matches("VALUES (VARCHAR 'hello', 2)");
+
+        assertEquals(1L, getTableVersion(tableName));
+
+        String updatedQueryId = metastore.getTable(SCHEMA, tableName).map(x -> x.getParameters().get("presto_query_id")).orElseThrow();
+        assertThat(queryId).isNotEqualTo(updatedQueryId);
+
+        assertUpdate("DROP TABLE " + tableName);
+    }
+
+    @Test
+    public void testCreateOrReplaceTableAsSelectWithNewLocation()
+    {
+        String tableName = "test_create_or_replace_new_location" + randomNameSuffix();
+        assertUpdate("CREATE TABLE " + tableName + " AS SELECT BIGINT '42' a, DOUBLE '-38.5' b", 1);
+        assertThat(query("SELECT CAST(a AS bigint), b FROM " + tableName))
+                .matches("VALUES (BIGINT '42', -385e-1)");
+
+        assertQueryFails("CREATE OR REPLACE TABLE " + tableName + " WITH (location = '" + getLocationForTable(bucketName, tableName + "_new_location") + "')" + " AS SELECT BIGINT '42' a, DOUBLE '-38.5' b",
+                "The provided location '.*' does not match the existing table location '.*'");
+
+        assertUpdate("DROP TABLE " + tableName);
+    }
+
+    @Test
+    public void testCreateOrReplaceTableAsSelectWithChangeDataFeedEnabled()
+    {
+        String tableName = "test_create_or_replace_cdf_enabled" + randomNameSuffix();
+        assertUpdate("CREATE OR REPLACE TABLE " + tableName + " AS SELECT BIGINT '42' a, DOUBLE '-38.5' b", 1);
+        assertThat(query("SELECT CAST(a AS bigint), b FROM " + tableName))
+                .matches("VALUES (BIGINT '42', -385e-1)");
+
+        assertQueryFails("CREATE OR REPLACE TABLE " + tableName + " WITH (change_data_feed_enabled = true)" + " AS SELECT BIGINT '42' a, DOUBLE '-38.5' b",
+                "CREATE OR REPLACE AS SELECT is not supported for tables with change data feed enabled");
+
+        assertEquals(0L, getTableVersion(tableName));
+
+        assertUpdate("DROP TABLE " + tableName);
+    }
+
+    @Test
+    public void testCreateOrReplaceTableChangeColumnNamesAndTypes()
+    {
+        String tableName = "test_create_or_replace_" + randomNameSuffix();
+        assertUpdate("CREATE TABLE " + tableName + " (a BIGINT, b DOUBLE)");
+        assertUpdate("CREATE OR REPLACE TABLE " + tableName + "(x VARCHAR, y BIGINT)");
+        assertEquals(1L, getTableVersion(tableName));
+        assertThat((String) computeScalar("SHOW CREATE TABLE " + tableName))
+                .matches(format(
+                        "CREATE TABLE delta.%s.%s \\(\n" +
+                                "   x varchar,\n" +
+                                "   y bigint\n" +
+                                "\\)\n" +
+                                "WITH \\(\n" +
+                                "   location = '.*'\n" +
+                                "\\)",
+                        SCHEMA,
+                        tableName));
+
+        assertUpdate("DROP TABLE " + tableName);
+    }
+
+    @Test
+    public void testCreateOrReplaceTableNoData()
+    {
+        String tableName = "test_create_or_replace_" + randomNameSuffix();
+        assertUpdate("CREATE TABLE " + tableName + " AS SELECT BIGINT '42' a, DOUBLE '-38.5' b", 1);
+        assertUpdate("CREATE OR REPLACE TABLE " + tableName + "(a VARCHAR, b BIGINT)");
+        assertEquals(1L, getTableVersion(tableName));
+        assertThat(query("SELECT COUNT(*) FROM " + tableName))
+                .matches("VALUES (BIGINT '0')");
+
+        assertUpdate("DROP TABLE " + tableName);
+    }
+
+    @Test
+    public void testCreateOrReplaceTableMetastoreUpdate()
+    {
+        String tableName = "test_create_or_replace_metastore_update" + randomNameSuffix();
+        assertUpdate("CREATE TABLE " + tableName + " (a BIGINT, b DOUBLE)");
+        String queryId = metastore.getTable(SCHEMA, tableName).map(x -> x.getParameters().get("presto_query_id")).orElseThrow();
+        assertUpdate("CREATE OR REPLACE TABLE " + tableName + "(x VARCHAR, y BIGINT)");
+        assertEquals(1L, getTableVersion(tableName));
+        String updatedQueryId = metastore.getTable(SCHEMA, tableName).map(x -> x.getParameters().get("presto_query_id")).orElseThrow();
+        assertThat(queryId).isNotEqualTo(updatedQueryId);
+
+        assertUpdate("DROP TABLE " + tableName);
+    }
+
+    @Test
+    public void testCreateOrReplaceTableWithNewLocation()
+    {
+        String tableName = "test_create_or_replace_new_location" + randomNameSuffix();
+        assertUpdate("CREATE TABLE " + tableName + " (a BIGINT, b DOUBLE)");
+        assertQueryFails("CREATE OR REPLACE TABLE " + tableName + "(x VARCHAR, y BIGINT)" + " WITH (location = '" + getLocationForTable(bucketName, tableName + "_new_location") + "')",
+                "The provided location '.*' does not match the existing table location '.*'");
+
+        assertUpdate("DROP TABLE " + tableName);
+    }
+
+    @Test
+    public void testCreateOrReplaceTableWithChangeDataFeedEnabled()
+    {
+        String tableName = "test_create_or_replace_cdf_enabled" + randomNameSuffix();
+        assertUpdate("CREATE OR REPLACE TABLE " + tableName + " (a BIGINT, b DOUBLE)");
+        assertQueryFails("CREATE OR REPLACE TABLE " + tableName + " (a BIGINT, b DOUBLE)" + " WITH (change_data_feed_enabled = true)",
+                "CREATE OR REPLACE is not supported for tables with change data feed enabled");
+
+        assertEquals(0L, getTableVersion(tableName));
+
+        assertUpdate("DROP TABLE " + tableName);
     }
 
     @Test
@@ -2293,6 +2453,11 @@ public abstract class BaseDeltaLakeConnectorSmokeTest
             return location;
         }
         throw new IllegalStateException("Location not found in SHOW CREATE TABLE result");
+    }
+
+    private long getTableVersion(String tableName)
+    {
+        return (Long) computeActual(format("SELECT max(version) FROM \"%s$history\"", tableName)).getOnlyValue();
     }
 
     private static Session disableStatisticsCollectionOnWrite(Session session)
