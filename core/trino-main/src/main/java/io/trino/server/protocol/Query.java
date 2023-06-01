@@ -62,6 +62,7 @@ import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
+import org.apache.commons.codec.binary.Base64;
 
 import javax.annotation.concurrent.GuardedBy;
 import javax.annotation.concurrent.ThreadSafe;
@@ -91,10 +92,11 @@ import static io.trino.SystemSessionProperties.isExchangeCompressionEnabled;
 import static io.trino.execution.QueryState.FAILED;
 import static io.trino.execution.QueryState.FINISHING;
 import static io.trino.memory.context.AggregatedMemoryContext.newSimpleAggregatedMemoryContext;
+import static io.trino.server.protocol.ArrowQueryResultRows.arrowQueryResultRowsBuilder;
 import static io.trino.server.protocol.ProtocolUtil.createColumn;
 import static io.trino.server.protocol.ProtocolUtil.toStatementStats;
 import static io.trino.server.protocol.QueryInfoUrlFactory.getQueryInfoUri;
-import static io.trino.server.protocol.RowOrientedQueryResultRows.queryResultRowsBuilder;
+import static io.trino.server.protocol.RowOrientedQueryResultRows.rowOrientedQueryResultRowsBuilder;
 import static io.trino.server.protocol.Slug.Context.EXECUTING_QUERY;
 import static io.trino.spi.StandardErrorCode.SERIALIZATION_ERROR;
 import static io.trino.util.Failures.toFailure;
@@ -477,19 +479,10 @@ class Query
         if (isStarted) {
             closeExchangeIfNecessary(queryInfo);
             // fetch result data from exchange
-
-            if (session.getClientCapabilities().contains(ClientCapabilities.ARROW_RESULTS.toString())) {
-                QueryResultRows pages = removePagesFromExchange(queryInfo, targetResultSize.toBytes());
-                // TODO: make pages available under a arrow flight url
-                List<List<Object>> arrowUris = ImmutableList.of(ImmutableList.of("http://..."));
-                resultRows = new QueryResultRowsArrowAdapter(pages, arrowUris);
-            }
-            else {
-                resultRows = removePagesFromExchange(queryInfo, targetResultSize.toBytes());
-            }
+            resultRows = removePagesFromExchange(queryInfo, targetResultSize.toBytes());
         }
         else {
-            resultRows = queryResultRowsBuilder(session).build();
+            resultRows = rowOrientedQueryResultRowsBuilder(session).build();
         }
 
         if ((queryInfo.getUpdateType() != null) && (updateCount == null)) {
@@ -574,49 +567,78 @@ class Query
 
     private synchronized QueryResultRows removePagesFromExchange(QueryInfo queryInfo, long targetResultBytes)
     {
+
         if (!resultsConsumed && queryInfo.getOutputStage().isEmpty()) {
-            return queryResultRowsBuilder(session)
+            return rowOrientedQueryResultRowsBuilder(session)
                     .withColumnsAndTypes(ImmutableList.of(), ImmutableList.of())
                     .build();
         }
-        // Remove as many pages as possible from the exchange until just greater than DESIRED_RESULT_BYTES
-        // NOTE: it is critical that query results are created for the pages removed from the exchange
-        // client while holding the lock because the query may transition to the finished state when the
-        // last page is removed.  If another thread observes this state before the response is cached
-        // the pages will be lost.
-        RowOrientedQueryResultRows.Builder resultBuilder = queryResultRowsBuilder(session)
-                // Intercept serialization exceptions and fail query if it's still possible.
-                // Put serialization exception aside to return failed query result.
-                .withExceptionConsumer(this::handleSerializationException)
-                .withColumnsAndTypes(columns, types);
 
-        try {
-            long bytes = 0;
-            while (bytes < targetResultBytes) {
-                // here we get pages from the exchange, is this a good place to do Arrow conversion?
+        if (session.getClientCapabilities().contains(ClientCapabilities.ARROW_RESULTS.toString())) {
+            BufferAllocator allocator = new RootAllocator();
+            ArrowQueryResultRows.Builder resultBuilder = arrowQueryResultRowsBuilder(session);
+            try {
+                while (allocator.getAllocatedMemory() < targetResultBytes) {
+                    // here we get pages from the exchange, is this a good place to do Arrow conversion?
 
-                // Idea 1: use Arrow Flight to stream data to the client
-                // Idea 2: chunk data into files, upload them and send JSON with links to the client (Snowflake JDBC driver does this)
+                    // Idea 1: use Arrow Flight to stream data to the client
+                    // Idea 2: chunk data into files, upload them and send JSON with links to the client (Snowflake JDBC driver does this)
 
-                Slice serializedPage = exchangeDataSource.pollPage();
-                if (serializedPage == null) {
-                    break;
+                    Slice serializedPage = exchangeDataSource.pollPage();
+                    if (serializedPage == null) {
+                        break;
+                    }
+                    VectorSchemaRoot vectorSchemaRoot = null; // TODO: map here from Slice to VectorSchemaRoot
+                    resultBuilder.addVectorSchemaRoot(vectorSchemaRoot)
+                            .withExceptionConsumer(this::handleSerializationException)
+                            .withColumnsAndTypes(columns, types);
                 }
-
-                Page page = deserializer.deserialize(serializedPage);
-                bytes += page.getLogicalSizeInBytes();
-                resultBuilder.addPage(page);
+                if (exchangeDataSource.isFinished()) {
+                    exchangeDataSource.close();
+                    deserializer = null; // null to reclaim memory of PagesSerde which does not expose explicit lifecycle
+                }
             }
-            if (exchangeDataSource.isFinished()) {
-                exchangeDataSource.close();
-                deserializer = null; // null to reclaim memory of PagesSerde which does not expose explicit lifecycle
+            catch (Throwable cause) {
+                queryManager.failQuery(queryId, cause);
             }
-        }
-        catch (Throwable cause) {
-            queryManager.failQuery(queryId, cause);
-        }
 
-        return resultBuilder.build();
+            return resultBuilder.build();
+        }
+        else {
+            // Remove as many pages as possible from the exchange until just greater than DESIRED_RESULT_BYTES
+            // NOTE: it is critical that query results are created for the pages removed from the exchange
+            // client while holding the lock because the query may transition to the finished state when the
+            // last page is removed.  If another thread observes this state before the response is cached
+            // the pages will be lost.
+            RowOrientedQueryResultRows.Builder resultBuilder = rowOrientedQueryResultRowsBuilder(session)
+                    // Intercept serialization exceptions and fail query if it's still possible.
+                    // Put serialization exception aside to return failed query result.
+                    .withExceptionConsumer(this::handleSerializationException)
+                    .withColumnsAndTypes(columns, types);
+
+            try {
+                long bytes = 0;
+                while (bytes < targetResultBytes) {
+                    Slice serializedPage = exchangeDataSource.pollPage();
+                    if (serializedPage == null) {
+                        break;
+                    }
+
+                    Page page = deserializer.deserialize(serializedPage);
+                    bytes += page.getLogicalSizeInBytes();
+                    resultBuilder.addPage(page);
+                }
+                if (exchangeDataSource.isFinished()) {
+                    exchangeDataSource.close();
+                    deserializer = null; // null to reclaim memory of PagesSerde which does not expose explicit lifecycle
+                }
+            }
+            catch (Throwable cause) {
+                queryManager.failQuery(queryId, cause);
+            }
+
+            return resultBuilder.build();
+        }
     }
 
     private static class ArrowPageConverter

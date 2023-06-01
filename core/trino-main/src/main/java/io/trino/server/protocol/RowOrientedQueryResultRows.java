@@ -155,7 +155,7 @@ public class RowOrientedQueryResultRows
         return new RowOrientedQueryResultRows(session, Optional.empty(), ImmutableList.of(), null);
     }
 
-    public static Builder queryResultRowsBuilder(Session session)
+    public static Builder rowOrientedQueryResultRowsBuilder(Session session)
     {
         return new Builder(session);
     }
