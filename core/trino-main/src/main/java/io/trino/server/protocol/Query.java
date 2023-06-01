@@ -85,7 +85,7 @@ import static io.trino.memory.context.AggregatedMemoryContext.newSimpleAggregate
 import static io.trino.server.protocol.ProtocolUtil.createColumn;
 import static io.trino.server.protocol.ProtocolUtil.toStatementStats;
 import static io.trino.server.protocol.QueryInfoUrlFactory.getQueryInfoUri;
-import static io.trino.server.protocol.QueryResultRows.queryResultRowsBuilder;
+import static io.trino.server.protocol.RowOrientedQueryResultRows.queryResultRowsBuilder;
 import static io.trino.server.protocol.Slug.Context.EXECUTING_QUERY;
 import static io.trino.spi.StandardErrorCode.SERIALIZATION_ERROR;
 import static io.trino.util.Failures.toFailure;
@@ -468,7 +468,16 @@ class Query
         if (isStarted) {
             closeExchangeIfNecessary(queryInfo);
             // fetch result data from exchange
-            resultRows = removePagesFromExchange(queryInfo, targetResultSize.toBytes());
+
+            if (session.getClientCapabilities().contains(ClientCapabilities.ARROW_RESULTS.toString())) {
+                QueryResultRows pages = removePagesFromExchange(queryInfo, targetResultSize.toBytes());
+                // TODO: make pages available under a arrow flight url
+                List<List<Object>> arrowUris = ImmutableList.of(ImmutableList.of("http://..."));
+                resultRows = new QueryResultRowsArrowAdapter(pages, arrowUris);
+            }
+            else {
+                resultRows = removePagesFromExchange(queryInfo, targetResultSize.toBytes());
+            }
         }
         else {
             resultRows = queryResultRowsBuilder(session).build();
@@ -566,7 +575,7 @@ class Query
         // client while holding the lock because the query may transition to the finished state when the
         // last page is removed.  If another thread observes this state before the response is cached
         // the pages will be lost.
-        QueryResultRows.Builder resultBuilder = queryResultRowsBuilder(session)
+        RowOrientedQueryResultRows.Builder resultBuilder = queryResultRowsBuilder(session)
                 // Intercept serialization exceptions and fail query if it's still possible.
                 // Put serialization exception aside to return failed query result.
                 .withExceptionConsumer(this::handleSerializationException)

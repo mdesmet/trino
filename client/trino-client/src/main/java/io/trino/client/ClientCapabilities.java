@@ -23,5 +23,6 @@ public enum ClientCapabilities
     //   time(p) without time zone
     //   interval X(p1) to Y(p2)
     // When this capability is not set, the server returns datetime types with precision = 3
-    PARAMETRIC_DATETIME;
+    PARAMETRIC_DATETIME,
+    ARROW_RESULTS;
 }
