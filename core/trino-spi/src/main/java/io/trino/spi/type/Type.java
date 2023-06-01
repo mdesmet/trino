@@ -19,6 +19,7 @@ import io.trino.spi.block.Block;
 import io.trino.spi.block.BlockBuilder;
 import io.trino.spi.block.BlockBuilderStatus;
 import io.trino.spi.connector.ConnectorSession;
+import org.apache.arrow.vector.types.pojo.ArrowType;
 
 import java.util.List;
 import java.util.Optional;
@@ -164,6 +165,14 @@ public interface Type
      * Append the value at {@code position} in {@code block} to {@code blockBuilder}.
      */
     void appendTo(Block block, int position, BlockBuilder blockBuilder);
+
+    /**
+     * Gets the Arrow type used to represent this value during consumption via v2 protocol
+     */
+    default Optional<ArrowType.ArrowTypeID> mapToArrow()
+    {
+        return Optional.empty();
+    }
 
     /**
      * Return the range of possible values for this type, if available.

@@ -47,12 +47,21 @@ import io.trino.operator.DirectExchangeClientSupplier;
 import io.trino.spi.ErrorCode;
 import io.trino.spi.Page;
 import io.trino.spi.QueryId;
+import io.trino.spi.block.Block;
 import io.trino.spi.block.BlockEncodingSerde;
 import io.trino.spi.exchange.ExchangeId;
 import io.trino.spi.security.SelectedRole;
 import io.trino.spi.type.Type;
 import io.trino.transaction.TransactionId;
 import io.trino.util.Ciphers;
+import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.memory.RootAllocator;
+import org.apache.arrow.vector.BitVector;
+import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.pojo.ArrowType;
+import org.apache.arrow.vector.types.pojo.Field;
 
 import javax.annotation.concurrent.GuardedBy;
 import javax.annotation.concurrent.ThreadSafe;
@@ -584,6 +593,11 @@ class Query
         try {
             long bytes = 0;
             while (bytes < targetResultBytes) {
+                // here we get pages from the exchange, is this a good place to do Arrow conversion?
+
+                // Idea 1: use Arrow Flight to stream data to the client
+                // Idea 2: chunk data into files, upload them and send JSON with links to the client (Snowflake JDBC driver does this)
+
                 Slice serializedPage = exchangeDataSource.pollPage();
                 if (serializedPage == null) {
                     break;
@@ -603,6 +617,106 @@ class Query
         }
 
         return resultBuilder.build();
+    }
+
+    private static class ArrowPageConverter
+    {
+        public static VectorSchemaRoot convertToArrowPage(Page page, List<Type> types, List<Column> columns)
+        {
+            BufferAllocator allocator = new RootAllocator();
+            List<Field> fields = Lists.newArrayList();
+            List<FieldVector> vectors = Lists.newArrayList();
+
+            for (int channelIndex = 0; channelIndex < page.getChannelCount(); channelIndex++) {
+                Block block = page.getBlock(channelIndex);
+                Type type = types.get(channelIndex);
+                String columnName = columns.get(channelIndex).getName();
+
+                ArrowType.ArrowTypeID arrowTypeId = type.mapToArrow().orElseThrow(() -> new RuntimeException("Trino type %s must support Arrow mapping".formatted(type)));
+
+                switch (arrowTypeId) {
+                    case Null -> {
+                        // if Type indicates it is Null... do nothing? Omit from results?
+                    }
+                    case Struct -> {
+                        // todo
+                    }
+                    case List -> {
+                        // todo
+                    }
+                    case LargeList -> {
+                        // todo
+                    }
+                    case FixedSizeList -> {
+                        // todo
+                    }
+                    case Union -> {
+                        // todo
+                    }
+                    case Map -> {
+                        // todo
+                    }
+                    case Int -> {
+                        IntVector valueVector = new IntVector(columnName, allocator);
+                        for (int index = 0; index < block.getPositionCount(); index++) {
+                            valueVector.setSafe(index, Math.toIntExact(type.getLong(block, index)));
+                        }
+                        valueVector.setValueCount(block.getPositionCount());
+                        vectors.add(valueVector);
+                        fields.add(valueVector.getField());
+                    }
+                    case FloatingPoint -> {
+                        // todo
+                    }
+                    case Utf8 -> {
+                        // todo
+                    }
+                    case LargeUtf8 -> {
+                        // todo
+                    }
+                    case Binary -> {
+                        // todo
+                    }
+                    case LargeBinary -> {
+                        // todo
+                    }
+                    case FixedSizeBinary -> {
+                        // todo
+                    }
+                    case Bool -> {
+                        BitVector valueVector = new BitVector(columnName, allocator);
+                        for (int index = 0; index < block.getPositionCount(); index++) {
+                            valueVector.setSafe(index, type.getBoolean(block, index) ? 1 : 0);
+                        }
+                        valueVector.setValueCount(block.getPositionCount());
+                        vectors.add(valueVector);
+                        fields.add(valueVector.getField());
+                    }
+                    case Decimal -> {
+                        // todo
+                    }
+                    case Date -> {
+                        // todo
+                    }
+                    case Time -> {
+                        // todo
+                    }
+                    case Timestamp -> {
+                        // todo
+                    }
+                    case Interval -> {
+                        // todo
+                    }
+                    case Duration -> {
+                        // todo
+                    }
+                    case NONE -> {
+                        // todo
+                    }
+                }
+            }
+            return new VectorSchemaRoot(fields, vectors);
+        }
     }
 
     private void closeExchangeIfNecessary(QueryInfo queryInfo)
