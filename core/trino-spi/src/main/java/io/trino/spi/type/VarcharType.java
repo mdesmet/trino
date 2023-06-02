@@ -24,6 +24,7 @@ import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.function.BlockIndex;
 import io.trino.spi.function.BlockPosition;
 import io.trino.spi.function.ScalarOperator;
+import org.apache.arrow.vector.types.pojo.ArrowType;
 
 import java.util.Objects;
 import java.util.Optional;
@@ -282,5 +283,11 @@ public final class VarcharType
         int leftLength = leftBlock.getSliceLength(leftPosition);
         int rightLength = rightBlock.getSliceLength(rightPosition);
         return leftBlock.compareTo(leftPosition, 0, leftLength, rightBlock, rightPosition, 0, rightLength);
+    }
+
+    @Override
+    public Optional<ArrowType> mapToArrow()
+    {
+        return Optional.of(ArrowType.LargeUtf8.INSTANCE);
     }
 }

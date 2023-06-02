@@ -66,7 +66,7 @@ public class QueryResults
                 partialCancelUri,
                 nextUri,
                 columns,
-                fixData(columns, data),
+                data == null ? data : (Iterable<List<Object>>) data,
                 stats,
                 error,
                 firstNonNull(warnings, ImmutableList.of()),

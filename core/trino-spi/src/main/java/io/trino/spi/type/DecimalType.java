@@ -14,8 +14,10 @@
 package io.trino.spi.type;
 
 import io.trino.spi.TrinoException;
+import org.apache.arrow.vector.types.pojo.ArrowType;
 
 import java.util.List;
+import java.util.Optional;
 
 import static io.trino.spi.StandardErrorCode.INVALID_FUNCTION_ARGUMENT;
 import static io.trino.spi.type.Decimals.MAX_PRECISION;
@@ -77,6 +79,12 @@ public abstract sealed class DecimalType
     public final boolean isOrderable()
     {
         return true;
+    }
+
+    @Override
+    public Optional<ArrowType> mapToArrow()
+    {
+        return super.mapToArrow();
     }
 
     public int getPrecision()

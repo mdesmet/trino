@@ -25,6 +25,7 @@ public final class IntegerType
         extends AbstractIntType
 {
     public static final IntegerType INTEGER = new IntegerType();
+    public static final ArrowType.Int ARROW_TYPE = new ArrowType.Int(32, true);
 
     private IntegerType()
     {
@@ -89,8 +90,8 @@ public final class IntegerType
     }
 
     @Override
-    public Optional<ArrowType.ArrowTypeID> mapToArrow()
+    public Optional<ArrowType> mapToArrow()
     {
-        return Optional.of(ArrowType.Int.TYPE_TYPE);
+        return Optional.of(ARROW_TYPE);
     }
 }

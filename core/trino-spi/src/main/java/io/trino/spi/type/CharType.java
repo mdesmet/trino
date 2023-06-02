@@ -24,6 +24,7 @@ import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.function.BlockIndex;
 import io.trino.spi.function.BlockPosition;
 import io.trino.spi.function.ScalarOperator;
+import org.apache.arrow.vector.types.pojo.ArrowType;
 
 import java.util.Objects;
 import java.util.Optional;
@@ -216,6 +217,12 @@ public final class CharType
             throw new IllegalArgumentException("Slice representing Char should not have trailing spaces");
         }
         blockBuilder.writeBytes(value, offset, length).closeEntry();
+    }
+
+    @Override
+    public Optional<ArrowType> mapToArrow()
+    {
+        return Optional.of(ArrowType.Utf8.INSTANCE);
     }
 
     @Override

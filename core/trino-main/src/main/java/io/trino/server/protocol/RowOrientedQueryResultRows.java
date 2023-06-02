@@ -85,11 +85,13 @@ public class RowOrientedQueryResultRows
         verify(totalRows == 0 || (totalRows > 0 && columns.isPresent()), "data present without columns and types");
     }
 
+    @Override
     public boolean isEmpty()
     {
         return totalRows == 0;
     }
 
+    @Override
     public Optional<List<Column>> getColumns()
     {
         return columns.map(columns -> columns.stream()
@@ -100,12 +102,14 @@ public class RowOrientedQueryResultRows
     /**
      * Returns expected row count (we don't know yet if every row is serializable).
      */
+    @Override
     @VisibleForTesting
     public long getTotalRowsCount()
     {
         return totalRows;
     }
 
+    @Override
     public Optional<Long> getUpdateCount()
     {
         // We should have exactly single bigint value as an update count.

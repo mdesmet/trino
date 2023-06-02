@@ -169,7 +169,7 @@ public interface Type
     /**
      * Gets the Arrow type used to represent this value during consumption via v2 protocol
      */
-    default Optional<ArrowType.ArrowTypeID> mapToArrow()
+    default Optional<ArrowType> mapToArrow()
     {
         return Optional.empty();
     }

@@ -59,10 +59,11 @@ import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BitVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.LargeVarCharVector;
+import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.ArrowType;
 import org.apache.arrow.vector.types.pojo.Field;
-import org.apache.commons.codec.binary.Base64;
 
 import javax.annotation.concurrent.GuardedBy;
 import javax.annotation.concurrent.ThreadSafe;
@@ -113,6 +114,7 @@ class Query
     private final Session session;
     private final Slug slug;
     private final Optional<URI> queryInfoUrl;
+    private final static BufferAllocator ROOT_ALLOCATOR = new RootAllocator();
 
     @GuardedBy("this")
     private final ExchangeDataSource exchangeDataSource;
@@ -575,10 +577,11 @@ class Query
         }
 
         if (session.getClientCapabilities().contains(ClientCapabilities.ARROW_RESULTS.toString())) {
-            BufferAllocator allocator = new RootAllocator();
+            BufferAllocator queryAllocator = ROOT_ALLOCATOR.newChildAllocator(queryId.toString(), Long.MAX_VALUE, Long.MAX_VALUE);
+            ArrowPageConverter arrowPageConverter = new ArrowPageConverter(deserializer, queryAllocator);
             ArrowQueryResultRows.Builder resultBuilder = arrowQueryResultRowsBuilder(session);
             try {
-                while (allocator.getAllocatedMemory() < targetResultBytes) {
+                while (queryAllocator.getAllocatedMemory() < targetResultBytes) {
                     // here we get pages from the exchange, is this a good place to do Arrow conversion?
 
                     // Idea 1: use Arrow Flight to stream data to the client
@@ -588,7 +591,7 @@ class Query
                     if (serializedPage == null) {
                         break;
                     }
-                    VectorSchemaRoot vectorSchemaRoot = null; // TODO: map here from Slice to VectorSchemaRoot
+                    VectorSchemaRoot vectorSchemaRoot = arrowPageConverter.convertToArrowPage(serializedPage, types, columns); // TODO: map here from Slice to VectorSchemaRoot
                     resultBuilder.addVectorSchemaRoot(vectorSchemaRoot)
                             .withExceptionConsumer(this::handleSerializationException)
                             .withColumnsAndTypes(columns, types);
@@ -643,9 +646,21 @@ class Query
 
     private static class ArrowPageConverter
     {
-        public static VectorSchemaRoot convertToArrowPage(Page page, List<Type> types, List<Column> columns)
+
+        private final PageDeserializer deserializer;
+
+        private final BufferAllocator allocator;
+
+        public ArrowPageConverter(PageDeserializer deserializer, BufferAllocator allocator)
         {
-            BufferAllocator allocator = new RootAllocator();
+            this.deserializer = deserializer;
+            this.allocator = allocator;
+        }
+
+        public VectorSchemaRoot convertToArrowPage(Slice slice, List<Type> types, List<Column> columns)
+        {
+            // todo: read from Slice, but for now just use the PageDeserializer
+            Page page = deserializer.deserialize(slice);
             List<Field> fields = Lists.newArrayList();
             List<FieldVector> vectors = Lists.newArrayList();
 
@@ -654,9 +669,9 @@ class Query
                 Type type = types.get(channelIndex);
                 String columnName = columns.get(channelIndex).getName();
 
-                ArrowType.ArrowTypeID arrowTypeId = type.mapToArrow().orElseThrow(() -> new RuntimeException("Trino type %s must support Arrow mapping".formatted(type)));
+                ArrowType arrowType = type.mapToArrow().orElseThrow(() -> new RuntimeException("Trino type %s must support Arrow mapping".formatted(type)));
 
-                switch (arrowTypeId) {
+                switch (arrowType.getTypeID()) {
                     case Null -> {
                         // if Type indicates it is Null... do nothing? Omit from results?
                     }
@@ -691,11 +706,22 @@ class Query
                         // todo
                     }
                     case Utf8 -> {
-                        // todo
+                        VarCharVector valueVector = new VarCharVector(columnName, allocator);
+                        for (int index = 0; index < block.getPositionCount(); index++) {
+                            valueVector.setSafe(index, type.getSlice(block, index).byteArray());
+                        }
+                        valueVector.setValueCount(block.getPositionCount());
+                        vectors.add(valueVector);
+                        fields.add(valueVector.getField());
                     }
                     case LargeUtf8 -> {
-                        // todo
-                    }
+                        LargeVarCharVector valueVector = new LargeVarCharVector(columnName, allocator);
+                        for (int index = 0; index < block.getPositionCount(); index++) {
+                            valueVector.setSafe(index, type.getSlice(block, index).byteArray());
+                        }
+                        valueVector.setValueCount(block.getPositionCount());
+                        vectors.add(valueVector);
+                        fields.add(valueVector.getField());                    }
                     case Binary -> {
                         // todo
                     }

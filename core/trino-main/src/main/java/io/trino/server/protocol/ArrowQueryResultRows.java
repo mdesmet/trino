@@ -44,24 +44,21 @@ import static java.util.Objects.requireNonNull;
 public class ArrowQueryResultRows
         implements QueryResultRows
 {
-    private final ConnectorSession session;
     private final Optional<List<ColumnAndType>> columns;
     private final List<VectorSchemaRoot> vectorSchemaRoots;
 
     private final List<Object> base64EncodedVectors;
-    private final Optional<Consumer<Throwable>> exceptionConsumer;
     private final long totalRows;
-    private final boolean supportsParametricDateTime;
 
     private ArrowQueryResultRows(Session session, Optional<List<ColumnAndType>> columns, List<VectorSchemaRoot> vectorSchemaRoots, Consumer<Throwable> exceptionConsumer)
     {
-        this.session = session.toConnectorSession();
+        // this.session = session.toConnectorSession();
         this.columns = requireNonNull(columns, "columns is null");
         this.vectorSchemaRoots = ImmutableList.copyOf(vectorSchemaRoots);
         this.base64EncodedVectors = encode(vectorSchemaRoots);
-        this.exceptionConsumer = Optional.ofNullable(exceptionConsumer);
+        // this.exceptionConsumer = Optional.ofNullable(exceptionConsumer);
         this.totalRows = countRows(vectorSchemaRoots);
-        this.supportsParametricDateTime = session.getClientCapabilities().contains(ClientCapabilities.PARAMETRIC_DATETIME.toString());
+        // this.supportsParametricDateTime = session.getClientCapabilities().contains(ClientCapabilities.PARAMETRIC_DATETIME.toString());
 
         verify(totalRows == 0 || (totalRows > 0 && columns.isPresent()), "data present without columns and types");
     }
