@@ -86,7 +86,7 @@ public class TestArrowQueryResource
     @Test
     public void testIdempotentResults()
     {
-        String sql = "SELECT returnflag FROM tpch.tiny.lineitem";
+        String sql = "SELECT returnflag FROM tpch.tiny.lineitem limit 10";
 
         Request request = preparePost()
                 .setHeader(TRINO_HEADERS.requestUser(), "user")

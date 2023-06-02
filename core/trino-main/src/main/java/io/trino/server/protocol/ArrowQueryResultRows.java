@@ -129,7 +129,7 @@ public class ArrowQueryResultRows
                     ByteArrayOutputStream out = new ByteArrayOutputStream();
                     ArrowStreamWriter writer = new ArrowStreamWriter(vectorSchemaRoot, /*DictionaryProvider=*/null, Channels.newChannel(out))) {
                 writer.writeBatch();
-                base64EncodedVectors.add(Base64.encode(out.toByteArray()));
+                base64EncodedVectors.add(String.valueOf(Base64.encode(out.toByteArray())));
             }
             catch (IOException e) {
                 throw new RuntimeException(e);
