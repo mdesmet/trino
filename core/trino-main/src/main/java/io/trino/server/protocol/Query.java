@@ -661,7 +661,6 @@ class Query
         {
             // todo: read from Slice, but for now just use the PageDeserializer
             Page page = deserializer.deserialize(slice);
-            List<Field> fields = Lists.newArrayList();
             List<FieldVector> vectors = Lists.newArrayList();
 
             for (int channelIndex = 0; channelIndex < page.getChannelCount(); channelIndex++) {
@@ -700,7 +699,6 @@ class Query
                         }
                         valueVector.setValueCount(block.getPositionCount());
                         vectors.add(valueVector);
-                        fields.add(valueVector.getField());
                     }
                     case FloatingPoint -> {
                         // todo
@@ -708,20 +706,21 @@ class Query
                     case Utf8 -> {
                         VarCharVector valueVector = new VarCharVector(columnName, allocator);
                         for (int index = 0; index < block.getPositionCount(); index++) {
-                            valueVector.setSafe(index, type.getSlice(block, index).byteArray());
+                            Slice valueSlice = type.getSlice(block, index);
+                            valueVector.setSafe(index, valueSlice.byteArray(), 0, valueSlice.length());
                         }
                         valueVector.setValueCount(block.getPositionCount());
                         vectors.add(valueVector);
-                        fields.add(valueVector.getField());
                     }
                     case LargeUtf8 -> {
                         LargeVarCharVector valueVector = new LargeVarCharVector(columnName, allocator);
                         for (int index = 0; index < block.getPositionCount(); index++) {
-                            valueVector.setSafe(index, type.getSlice(block, index).byteArray());
+                            Slice valueSlice = type.getSlice(block, index);
+                            valueVector.setSafe(index, valueSlice.byteArray(), 0, valueSlice.length());
                         }
                         valueVector.setValueCount(block.getPositionCount());
                         vectors.add(valueVector);
-                        fields.add(valueVector.getField());                    }
+                    }
                     case Binary -> {
                         // todo
                     }
@@ -738,7 +737,6 @@ class Query
                         }
                         valueVector.setValueCount(block.getPositionCount());
                         vectors.add(valueVector);
-                        fields.add(valueVector.getField());
                     }
                     case Decimal -> {
                         // todo
@@ -763,7 +761,7 @@ class Query
                     }
                 }
             }
-            return new VectorSchemaRoot(fields, vectors);
+            return new VectorSchemaRoot(vectors);
         }
     }
 

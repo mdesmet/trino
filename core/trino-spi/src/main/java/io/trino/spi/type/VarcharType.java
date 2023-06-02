@@ -288,6 +288,6 @@ public final class VarcharType
     @Override
     public Optional<ArrowType> mapToArrow()
     {
-        return Optional.of(ArrowType.LargeUtf8.INSTANCE);
+        return Optional.of(ArrowType.Utf8.INSTANCE);
     }
 }
