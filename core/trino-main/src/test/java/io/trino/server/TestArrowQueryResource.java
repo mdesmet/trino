@@ -135,8 +135,17 @@ public class TestArrowQueryResource
                 """));
     }
 
-    private void assertArrowResult(String sql, List<String> expected)
+    @Test
+    public void testCount()
             throws Exception
+    {
+        String sql = "SELECT * FROM tpch.tiny.orders";
+        List<VectorSchemaRoot> vectorSchemaRoots = getVectorSchemaRoots(sql);
+        assertEquals(7500, vectorSchemaRoots.stream().map(VectorSchemaRoot::getRowCount).reduce(0, Integer::sum).intValue());
+    }
+
+    private List<VectorSchemaRoot> getVectorSchemaRoots(String sql)
+        throws Exception
     {
         Request request = preparePost()
                 .setHeader(TRINO_HEADERS.requestUser(), "user")
@@ -167,7 +176,7 @@ public class TestArrowQueryResource
         }
 
         BufferAllocator allocator = new RootAllocator();
-        List<VectorSchemaRoot> vectorSchemaRoots = new ArrayList<>();
+        List<org.apache.arrow.vector.VectorSchemaRoot> vectorSchemaRoots = new ArrayList<>();
 
         List<String> input = datas.stream().map(d -> ((Iterable<List<String>>) d).iterator().next().get(0)).toList();
 
@@ -179,7 +188,14 @@ public class TestArrowQueryResource
             reader.loadNextBatch();
         }
         System.out.println(vectorSchemaRoots);
-        assertEquals(expected.size(), input.size());
+        return vectorSchemaRoots;
+    }
+
+    private void assertArrowResult(String sql, List<String> expected)
+            throws Exception
+    {
+        List<VectorSchemaRoot> vectorSchemaRoots = getVectorSchemaRoots(sql);
+        assertEquals(expected.size(), vectorSchemaRoots.size());
         forEachPair(vectorSchemaRoots.stream(), expected.stream(), (a, b) -> assertEquals(b, a.contentToTSVString()));
     }
 
