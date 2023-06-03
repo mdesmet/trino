@@ -85,7 +85,7 @@ public class TestArrowQueryResource
     }
 
     @Test
-    public void testMultipleVarcharValues()
+    public void testMultipleValues()
             throws Exception
     {
         String sql = "SELECT nationkey,name,regionkey,comment FROM tpch.tiny.nation order by 1 limit 10";
@@ -101,6 +101,17 @@ public class TestArrowQueryResource
                 7	GERMANY	3	l platelets. regular accounts x-ray: unusual, regular acco
                 8	INDIA	2	ss excuses cajole slyly across the packages. deposits print aroun
                 9	INDONESIA	2	 slyly express asymptotes. regular deposits haggle slyly. carefully ironic hockey players sleep blithely. carefull
+                """));
+    }
+
+    @Test
+    public void testSingleDateValue()
+            throws Exception
+    {
+        String sql = "SELECT orderdate FROM tpch.tiny.orders order by 1 limit 1";
+        assertArrowResult(sql, ImmutableList.of("""
+                orderdate
+                8035
                 """));
     }
 
@@ -148,7 +159,7 @@ public class TestArrowQueryResource
             reader.loadNextBatch();
         }
         System.out.println(vectorSchemaRoots);
-        assertEquals(input.size(), expected.size());
+        assertEquals(expected.size(), input.size());
         forEachPair(vectorSchemaRoots.stream(), expected.stream(), (a, b) -> assertEquals(b, a.contentToTSVString()));
     }
 

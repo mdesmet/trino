@@ -51,14 +51,14 @@ import io.trino.spi.block.Block;
 import io.trino.spi.block.BlockEncodingSerde;
 import io.trino.spi.exchange.ExchangeId;
 import io.trino.spi.security.SelectedRole;
-import io.trino.spi.type.DecimalType;
 import io.trino.spi.type.Type;
 import io.trino.transaction.TransactionId;
 import io.trino.util.Ciphers;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BitVector;
-import org.apache.arrow.vector.DecimalVector;
+import org.apache.arrow.vector.DateDayVector;
+import org.apache.arrow.vector.DateMilliVector;
 import org.apache.arrow.vector.FieldVector;
 import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
@@ -708,8 +708,7 @@ class Query
                     case FloatingPoint -> {
                         Float8Vector valueVector = new Float8Vector(columnName, allocator);
                         for (int index = 0; index < block.getPositionCount(); index++) {
-                            Slice valueSlice = type.getSlice(block, index);
-                            valueVector.setSafe(index, valueSlice.byteArray(), 0, valueSlice.length());
+                            valueVector.setSafe(index, type.getDouble(block, index));
                         }
                         valueVector.setValueCount(block.getPositionCount());
                         vectors.add(valueVector);
@@ -750,23 +749,27 @@ class Query
                         vectors.add(valueVector);
                     }
                     case Decimal -> {
-                        DecimalType decimalType = (DecimalType) type;
-                        DecimalVector valueVector = new DecimalVector(columnName, allocator, decimalType.getPrecision(), decimalType.getScale());
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
+                    }
+                    case Date -> {
+                        DateDayVector valueVector = new DateDayVector(columnName, allocator);
                         for (int index = 0; index < block.getPositionCount(); index++) {
-                            Slice valueSlice = type.getSlice(block, index);
-                            valueVector.setSafe(index, valueSlice.byteArray(), 0, valueSlice.length());
+                            valueVector.setSafe(index, Math.toIntExact(type.getLong(block, index)));
                         }
                         valueVector.setValueCount(block.getPositionCount());
                         vectors.add(valueVector);
-                    }
-                    case Date -> {
-                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
                     }
                     case Time -> {
                         throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
                     }
                     case Timestamp -> {
-                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
+                        DateMilliVector valueVector = new DateMilliVector(columnName, allocator);
+                        for (int index = 0; index < block.getPositionCount(); index++) {
+                            long value = type.getLong(block, index);
+                            valueVector.setSafe(index, value);
+                        }
+                        valueVector.setValueCount(block.getPositionCount());
+                        vectors.add(valueVector);
                     }
                     case Interval -> {
                         throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
