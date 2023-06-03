@@ -573,7 +573,6 @@ class Query
 
     private synchronized QueryResultRows removePagesFromExchange(QueryInfo queryInfo, long targetResultBytes)
     {
-
         if (!resultsConsumed && queryInfo.getOutputStage().isEmpty()) {
             return rowOrientedQueryResultRowsBuilder(session)
                     .withColumnsAndTypes(ImmutableList.of(), ImmutableList.of())

@@ -85,6 +85,17 @@ public class TestArrowQueryResource
     }
 
     @Test
+    public void testSingleBigIntValue()
+            throws Exception
+    {
+        String sql = "select max(orderkey) as m from tpch.tiny.orders";
+        assertArrowResult(sql, ImmutableList.of("""
+                m
+                60000
+                """));
+    }
+
+    @Test
     public void testNation()
             throws Exception
     {
@@ -156,7 +167,7 @@ public class TestArrowQueryResource
     {
         String sql = "SELECT orderkey FROM tpch.tiny.orders";
         List<VectorSchemaRoot> vectorSchemaRoots = getVectorSchemaRoots(sql);
-        assertEquals(7500, vectorSchemaRoots.stream().map(VectorSchemaRoot::getRowCount).reduce(0, Integer::sum).intValue());
+        assertEquals(15000, vectorSchemaRoots.stream().map(VectorSchemaRoot::getRowCount).reduce(0, Integer::sum).intValue());
     }
 
     private List<VectorSchemaRoot> getVectorSchemaRoots(String sql)
@@ -193,13 +204,18 @@ public class TestArrowQueryResource
         BufferAllocator allocator = new RootAllocator();
         List<org.apache.arrow.vector.VectorSchemaRoot> vectorSchemaRoots = new ArrayList<>();
 
-        List<String> input = datas.stream().map(d -> ((Iterable<List<String>>) d).iterator().next().get(0)).toList();
+        List<String> input = datas.stream().flatMap(d -> {
+            List<String> elements = ((Iterable<List<String>>) d).iterator().next();
+            return elements.stream();
+        }).toList();
 
         List<byte[]> decodedChunks = input.stream().map(s -> Base64.decodeBase64(s.getBytes())).toList();
         for (byte[] chunk : decodedChunks) {
             ByteArrayInputStream out = new ByteArrayInputStream(chunk);
             ArrowStreamReader reader = new ArrowStreamReader(out, allocator);
-            vectorSchemaRoots.add(reader.getVectorSchemaRoot());
+            VectorSchemaRoot vectorSchemaRoot = reader.getVectorSchemaRoot();
+            System.out.println("Adding row count of " + vectorSchemaRoot.getRowCount());
+            vectorSchemaRoots.add(vectorSchemaRoot);
             reader.loadNextBatch();
         }
         System.out.println(vectorSchemaRoots);
