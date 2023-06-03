@@ -173,7 +173,6 @@ public interface Type
     {
         return Optional.empty();
     }
-
     /**
      * Return the range of possible values for this type, if available.
      * <p>

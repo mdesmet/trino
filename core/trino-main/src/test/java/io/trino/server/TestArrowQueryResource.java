@@ -13,6 +13,7 @@
  */
 package io.trino.server;
 
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.Lists;
 import io.airlift.http.client.HttpClient;
 import io.airlift.http.client.Request;
@@ -21,20 +22,22 @@ import io.airlift.log.Logger;
 import io.trino.client.QueryResults;
 import io.trino.plugin.tpch.TpchPlugin;
 import io.trino.server.testing.TestingTrinoServer;
+import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.ipc.ArrowStreamReader;
+import org.apache.commons.codec.binary.Base64;
+import org.checkerframework.checker.nullness.qual.Nullable;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
 import java.io.ByteArrayInputStream;
-import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
-import java.util.Base64;
 import java.util.List;
 
+import static com.google.common.collect.Streams.forEachPair;
 import static io.airlift.http.client.HttpUriBuilder.uriBuilderFrom;
 import static io.airlift.http.client.JsonResponseHandler.createJsonResponseHandler;
 import static io.airlift.http.client.Request.Builder.prepareGet;
@@ -44,7 +47,7 @@ import static io.airlift.json.JsonCodec.jsonCodec;
 import static io.airlift.testing.Closeables.closeAll;
 import static io.trino.client.ProtocolHeaders.TRINO_HEADERS;
 import static java.nio.charset.StandardCharsets.UTF_8;
-import static org.testng.Assert.assertEquals;
+import static org.testng.AssertJUnit.assertEquals;
 
 @Test(singleThreaded = true)
 public class TestArrowQueryResource
@@ -71,27 +74,39 @@ public class TestArrowQueryResource
     }
 
     @Test
-    public void testIdempotentResults()
+    public void testSingleVarcharValue()
+            throws Exception
     {
-        String sql = "SELECT * FROM tpch.tiny.nation Limit 7";
-
-        Request request = preparePost()
-                .setHeader(TRINO_HEADERS.requestUser(), "user")
-                .setHeader(TRINO_HEADERS.requestClientCapabilities(), "ARROW_RESULTS")
-                .setUri(uriBuilderFrom(server.getBaseUrl().resolve("/v1/statement")).build())
-                .setBodyGenerator(createStaticBodyGenerator(sql, UTF_8))
-                .build();
-
-        QueryResults queryResults = client.execute(request, createJsonResponseHandler(jsonCodec(QueryResults.class)));
-
-        pollForResults(queryResults.getNextUri(), client, Lists.newArrayList());
+        String sql = "SELECT returnflag FROM tpch.tiny.lineitem order by 1 limit 1";
+        assertArrowResult(sql, ImmutableList.of("""
+                returnflag
+                A
+                """));
     }
 
     @Test
-    public void testMappingResults()
+    public void testMultipleVarcharValues()
+            throws Exception
     {
-        String sql = "SELECT nationkey,name,regionkey,comment FROM tpch.tiny.nation limit 10";
+        String sql = "SELECT nationkey,name,regionkey,comment FROM tpch.tiny.nation order by 1 limit 10";
+        assertArrowResult(sql, ImmutableList.of("""
+                nationkey	name	regionkey	comment
+                0	ALGERIA	0	 haggle. carefully final deposits detect slyly agai
+                1	ARGENTINA	1	al foxes promise slyly according to the regular accounts. bold requests alon
+                2	BRAZIL	1	y alongside of the pending deposits. carefully special packages are about the ironic forges. slyly special\s
+                3	CANADA	1	eas hang ironic, silent packages. slyly regular packages are furiously over the tithes. fluffily bold
+                4	EGYPT	4	y above the carefully unusual theodolites. final dugouts are quickly across the furiously regular d
+                5	ETHIOPIA	0	ven packages wake quickly. regu
+                6	FRANCE	3	refully final requests. regular, ironi
+                7	GERMANY	3	l platelets. regular accounts x-ray: unusual, regular acco
+                8	INDIA	2	ss excuses cajole slyly across the packages. deposits print aroun
+                9	INDONESIA	2	 slyly express asymptotes. regular deposits haggle slyly. carefully ironic hockey players sleep blithely. carefull
+                """));
+    }
 
+    private void assertArrowResult(String sql, List<String> expected)
+            throws Exception
+    {
         Request request = preparePost()
                 .setHeader(TRINO_HEADERS.requestUser(), "user")
                 .setHeader(TRINO_HEADERS.requestClientCapabilities(), "ARROW_RESULTS")
@@ -101,37 +116,8 @@ public class TestArrowQueryResource
 
         QueryResults queryResults = client.execute(request, createJsonResponseHandler(jsonCodec(QueryResults.class)));
         URI uri = queryResults.getNextUri();
-        ArrayList<Iterable<List<Object>>> chunks = Lists.newArrayList();
+        ArrayList<@Nullable Object> datas = Lists.newArrayList();
 
-        pollForResults(uri, client, chunks);
-
-        String firstChunk = chunks.get(0).iterator().next().get(0).toString();
-        try (ByteArrayInputStream inputStream = new ByteArrayInputStream(Base64.getDecoder().decode(firstChunk.getBytes(UTF_8)));
-                ArrowStreamReader reader = new ArrowStreamReader(inputStream, new RootAllocator(Long.MAX_VALUE))) {
-            VectorSchemaRoot root = reader.getVectorSchemaRoot();
-            reader.loadNextBatch();
-            root.getFieldVectors().forEach(vector -> {
-                System.out.printf("getName: %s%n", vector.getField().getName());
-                System.out.printf("getType: %s%n", vector.getField().getType());
-                System.out.println("values:");
-                for (int i = 0; i < vector.getValueCount(); i++) {
-                    System.out.println(vector.getObject(i));
-                }
-            });
-
-            assertEquals((root.getFieldVectors().get(0).getObject(0)).toString(), "0");
-            assertEquals((root.getFieldVectors().get(1).getObject(0)).toString(), "ALGERIA");
-            assertEquals((root.getFieldVectors().get(2).getObject(0)).toString(), "0");
-            assertEquals((root.getFieldVectors().get(3).getObject(0)).toString(), " haggle. carefully final deposits detect slyly agai");
-        }
-
-        catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    private static void pollForResults(URI uri, HttpClient client, ArrayList<Iterable<List<Object>>> datas)
-    {
         while (uri != null) {
             QueryResults results = client.execute(
                     prepareGet()
@@ -142,12 +128,28 @@ public class TestArrowQueryResource
                     createJsonResponseHandler(jsonCodec(QueryResults.class)));
 
             Iterable<List<Object>> data = results.getData();
-            if (data != null) {
+            if (data != null){
                 datas.add(data);
             }
 
             uri = results.getNextUri();
         }
+
+        BufferAllocator allocator = new RootAllocator();
+        List<VectorSchemaRoot> vectorSchemaRoots = new ArrayList<>();
+
+        List<String> input = datas.stream().map(d -> ((Iterable<List<String>>) d).iterator().next().get(0)).toList();
+
+        List<byte[]> decodedChunks = input.stream().map(s -> Base64.decodeBase64(s.getBytes())).toList();
+        for (byte[] chunk : decodedChunks) {
+            ByteArrayInputStream out = new ByteArrayInputStream(chunk);
+            ArrowStreamReader reader = new ArrowStreamReader(out, allocator);
+            vectorSchemaRoots.add(reader.getVectorSchemaRoot());
+            reader.loadNextBatch();
+        }
+        System.out.println(vectorSchemaRoots);
+        assertEquals(input.size(), expected.size());
+        forEachPair(vectorSchemaRoots.stream(), expected.stream(), (a, b) -> assertEquals(b, a.contentToTSVString()));
     }
 
     public static final class ArrowQueryRunnerMain
@@ -162,34 +164,6 @@ public class TestArrowQueryResource
             server.createCatalog("tpch", "tpch");
             Logger log = Logger.get(TestArrowQueryResource.class);
             log.info("======== SERVER STARTED ========");
-            log.info(server.getBaseUrl().toString());
-        }
-    }
-
-    public static final class QueryClientRunner
-    {
-        private static HttpClient client = new JettyHttpClient();
-
-        private QueryClientRunner() {}
-
-        public static void main(String[] args)
-                throws Exception
-        {
-            String sql = "SELECT nationkey,name,regionkey,comment FROM tpch.tiny.nation";
-
-            Request request = preparePost()
-                    .setHeader(TRINO_HEADERS.requestUser(), "user")
-                    .setHeader(TRINO_HEADERS.requestClientCapabilities(), "ARROW_RESULTS")
-                    .setUri(uriBuilderFrom(URI.create("http://127.0.0.1:56329").resolve("/v1/statement")).build())
-                    .setBodyGenerator(createStaticBodyGenerator(sql, UTF_8))
-                    .build();
-
-            QueryResults queryResults = client.execute(request, createJsonResponseHandler(jsonCodec(QueryResults.class)));
-            URI uri = queryResults.getNextUri();
-            ArrayList<Iterable<List<Object>>> datas = Lists.newArrayList();
-
-            pollForResults(uri, client, datas);
-            System.out.println(datas);
         }
     }
 }

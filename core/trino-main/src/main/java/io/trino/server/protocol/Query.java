@@ -51,18 +51,23 @@ import io.trino.spi.block.Block;
 import io.trino.spi.block.BlockEncodingSerde;
 import io.trino.spi.exchange.ExchangeId;
 import io.trino.spi.security.SelectedRole;
+import io.trino.spi.type.DecimalType;
 import io.trino.spi.type.Type;
 import io.trino.transaction.TransactionId;
 import io.trino.util.Ciphers;
 import org.apache.arrow.memory.BufferAllocator;
 import org.apache.arrow.memory.RootAllocator;
 import org.apache.arrow.vector.BitVector;
+import org.apache.arrow.vector.DecimalVector;
 import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.Float8Vector;
 import org.apache.arrow.vector.IntVector;
 import org.apache.arrow.vector.LargeVarCharVector;
+import org.apache.arrow.vector.NullVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.ArrowType;
+import org.apache.arrow.vector.util.Text;
 
 import javax.annotation.concurrent.GuardedBy;
 import javax.annotation.concurrent.ThreadSafe;
@@ -645,7 +650,6 @@ class Query
 
     private static class ArrowPageConverter
     {
-
         private final PageDeserializer deserializer;
 
         private final BufferAllocator allocator;
@@ -671,25 +675,27 @@ class Query
 
                 switch (arrowType.getTypeID()) {
                     case Null -> {
-                        // if Type indicates it is Null... do nothing? Omit from results?
+                        NullVector nullVector = new NullVector(columnName);
+                        nullVector.setValueCount(block.getPositionCount());
+                        vectors.add(nullVector);
                     }
                     case Struct -> {
-                        // todo
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
                     }
                     case List -> {
-                        // todo
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
                     }
                     case LargeList -> {
-                        // todo
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
                     }
                     case FixedSizeList -> {
-                        // todo
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
                     }
                     case Union -> {
-                        // todo
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
                     }
                     case Map -> {
-                        // todo
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
                     }
                     case Int -> {
                         IntVector valueVector = new IntVector(columnName, allocator);
@@ -700,13 +706,19 @@ class Query
                         vectors.add(valueVector);
                     }
                     case FloatingPoint -> {
-                        // todo
+                        Float8Vector valueVector = new Float8Vector(columnName, allocator);
+                        for (int index = 0; index < block.getPositionCount(); index++) {
+                            Slice valueSlice = type.getSlice(block, index);
+                            valueVector.setSafe(index, valueSlice.byteArray(), 0, valueSlice.length());
+                        }
+                        valueVector.setValueCount(block.getPositionCount());
+                        vectors.add(valueVector);
                     }
                     case Utf8 -> {
                         VarCharVector valueVector = new VarCharVector(columnName, allocator);
                         for (int index = 0; index < block.getPositionCount(); index++) {
                             Slice valueSlice = type.getSlice(block, index);
-                            valueVector.setSafe(index, valueSlice.getBytes(), 0, valueSlice.length());
+                            valueVector.setSafe(index, new Text(valueSlice.toStringUtf8()));
                         }
                         valueVector.setValueCount(block.getPositionCount());
                         vectors.add(valueVector);
@@ -721,13 +733,13 @@ class Query
                         vectors.add(valueVector);
                     }
                     case Binary -> {
-                        // todo
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
                     }
                     case LargeBinary -> {
-                        // todo
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
                     }
                     case FixedSizeBinary -> {
-                        // todo
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
                     }
                     case Bool -> {
                         BitVector valueVector = new BitVector(columnName, allocator);
@@ -738,25 +750,32 @@ class Query
                         vectors.add(valueVector);
                     }
                     case Decimal -> {
-                        // todo
+                        DecimalType decimalType = (DecimalType) type;
+                        DecimalVector valueVector = new DecimalVector(columnName, allocator, decimalType.getPrecision(), decimalType.getScale());
+                        for (int index = 0; index < block.getPositionCount(); index++) {
+                            Slice valueSlice = type.getSlice(block, index);
+                            valueVector.setSafe(index, valueSlice.byteArray(), 0, valueSlice.length());
+                        }
+                        valueVector.setValueCount(block.getPositionCount());
+                        vectors.add(valueVector);
                     }
                     case Date -> {
-                        // todo
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
                     }
                     case Time -> {
-                        // todo
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
                     }
                     case Timestamp -> {
-                        // todo
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
                     }
                     case Interval -> {
-                        // todo
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
                     }
                     case Duration -> {
-                        // todo
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
                     }
                     case NONE -> {
-                        // todo
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
                     }
                 }
             }
