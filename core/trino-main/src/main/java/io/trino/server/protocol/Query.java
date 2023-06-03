@@ -582,7 +582,7 @@ class Query
         if (session.getClientCapabilities().contains(ClientCapabilities.ARROW_RESULTS.toString())) {
             BufferAllocator queryAllocator = ROOT_ALLOCATOR.newChildAllocator(queryId.toString(), Long.MAX_VALUE, Long.MAX_VALUE);
             ArrowPageConverter arrowPageConverter = new ArrowPageConverter(deserializer, queryAllocator);
-            ArrowQueryResultRows.Builder resultBuilder = arrowQueryResultRowsBuilder(session);
+            ArrowQueryResultRows.Builder resultBuilder = arrowQueryResultRowsBuilder();
             try {
                 while (queryAllocator.getAllocatedMemory() < targetResultBytes) {
                     // here we get pages from the exchange, is this a good place to do Arrow conversion?
@@ -596,7 +596,6 @@ class Query
                     }
                     VectorSchemaRoot vectorSchemaRoot = arrowPageConverter.convertToArrowPage(serializedPage, types, columns); // TODO: map here from Slice to VectorSchemaRoot
                     resultBuilder.addVectorSchemaRoot(vectorSchemaRoot)
-                            .withExceptionConsumer(this::handleSerializationException)
                             .withColumnsAndTypes(columns, types);
                 }
                 if (exchangeDataSource.isFinished()) {

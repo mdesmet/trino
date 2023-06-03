@@ -14,15 +14,14 @@
 package io.trino.server.protocol;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.Lists;
 import com.nimbusds.jose.util.Base64;
-import io.trino.Session;
-import io.trino.client.ClientCapabilities;
 import io.trino.client.Column;
-import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.type.Type;
 import org.apache.arrow.vector.BigIntVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.ipc.ArrowStreamWriter;
+import org.apache.arrow.vector.util.VectorSchemaRootAppender;
 
 import javax.annotation.Nullable;
 import java.io.ByteArrayOutputStream;
@@ -31,11 +30,9 @@ import java.nio.channels.Channels;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Optional;
-import java.util.function.Consumer;
 
 import static com.google.common.base.MoreObjects.toStringHelper;
 import static com.google.common.base.Preconditions.checkArgument;
-import static com.google.common.base.Preconditions.checkState;
 import static com.google.common.base.Verify.verify;
 import static com.google.common.collect.ImmutableList.toImmutableList;
 import static io.trino.spi.type.BigintType.BIGINT;
@@ -45,20 +42,14 @@ public class ArrowQueryResultRows
         implements QueryResultRows
 {
     private final Optional<List<ColumnAndType>> columns;
-    private final List<VectorSchemaRoot> vectorSchemaRoots;
-
-    private final List<Object> base64EncodedVectors;
+    private final Optional<VectorSchemaRoot> vectorSchemaRoot;
     private final long totalRows;
 
-    private ArrowQueryResultRows(Session session, Optional<List<ColumnAndType>> columns, List<VectorSchemaRoot> vectorSchemaRoots, Consumer<Throwable> exceptionConsumer)
+    private ArrowQueryResultRows(Optional<List<ColumnAndType>> columns, Optional<VectorSchemaRoot> vectorSchemaRoot)
     {
-        // this.session = session.toConnectorSession();
         this.columns = requireNonNull(columns, "columns is null");
-        this.vectorSchemaRoots = ImmutableList.copyOf(vectorSchemaRoots);
-        this.base64EncodedVectors = encode(vectorSchemaRoots);
-        // this.exceptionConsumer = Optional.ofNullable(exceptionConsumer);
-        this.totalRows = countRows(vectorSchemaRoots);
-        // this.supportsParametricDateTime = session.getClientCapabilities().contains(ClientCapabilities.PARAMETRIC_DATETIME.toString());
+        this.vectorSchemaRoot = requireNonNull(vectorSchemaRoot, "vectorSchemaRoot is null");
+        this.totalRows = vectorSchemaRoot.map(VectorSchemaRoot::getRowCount).orElse(0);
 
         verify(totalRows == 0 || (totalRows > 0 && columns.isPresent()), "data present without columns and types");
     }
@@ -97,9 +88,7 @@ public class ArrowQueryResultRows
             return Optional.empty();
         }
 
-        checkState(!vectorSchemaRoots.isEmpty(), "no vectorSchemaRoots available");
-        VectorSchemaRoot vectorSchemaRoot = vectorSchemaRoots.get(0);
-        BigIntVector vector = (BigIntVector) vectorSchemaRoot.getVector(0);
+        BigIntVector vector = (BigIntVector) vectorSchemaRoot.get().getVector(0);
         if (vector.isNull(0)) {
             return Optional.empty();
         }
@@ -109,55 +98,39 @@ public class ArrowQueryResultRows
     @Override
     public Iterator<List<Object>> iterator()
     {
-        return ImmutableList.of(base64EncodedVectors).stream().iterator();
+        return ImmutableList.of((List<Object>) ImmutableList.of(encode(vectorSchemaRoot.get()))).stream().iterator();
     }
 
-    private static long countRows(List<VectorSchemaRoot> vectorSchemaRoots)
+    private static Object encode(VectorSchemaRoot vectorSchemaRoot)
     {
-        long rows = 0;
-        for (VectorSchemaRoot vectorSchemaRoot : vectorSchemaRoots) {
-            rows += vectorSchemaRoot.getRowCount();
+        try (
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                ArrowStreamWriter writer = new ArrowStreamWriter(vectorSchemaRoot, /*DictionaryProvider=*/null, Channels.newChannel(out))) {
+            writer.writeBatch();
+            return String.valueOf(Base64.encode(out.toByteArray()));
         }
-        return rows;
-    }
-
-    private static List<Object> encode(List<VectorSchemaRoot> vectorSchemaRoots)
-    {
-        ImmutableList.Builder<Object> base64EncodedVectors = ImmutableList.builder();
-        for (VectorSchemaRoot vectorSchemaRoot : vectorSchemaRoots) {
-            try (
-                    ByteArrayOutputStream out = new ByteArrayOutputStream();
-                    ArrowStreamWriter writer = new ArrowStreamWriter(vectorSchemaRoot, /*DictionaryProvider=*/null, Channels.newChannel(out))) {
-                writer.writeBatch();
-                base64EncodedVectors.add(String.valueOf(Base64.encode(out.toByteArray())));
-            }
-            catch (IOException e) {
-                throw new RuntimeException(e);
-            }
+        catch (IOException e) {
+            throw new RuntimeException(e);
         }
-        return base64EncodedVectors.build();
     }
 
-    public static Builder arrowQueryResultRowsBuilder(Session session)
+    public static Builder arrowQueryResultRowsBuilder()
     {
-        return new Builder(session);
+        return new Builder();
     }
 
     public static class Builder
     {
-        private final Session session;
-        private final ImmutableList.Builder<VectorSchemaRoot> vectorSchemaRoots = ImmutableList.builder();
+        private Optional<VectorSchemaRoot> root = Optional.empty();
         private Optional<List<ColumnAndType>> columns = Optional.empty();
-        private Consumer<Throwable> exceptionConsumer;
-
-        public Builder(Session session)
-        {
-            this.session = requireNonNull(session, "session is null");
-        }
 
         public Builder addVectorSchemaRoot(VectorSchemaRoot vectorSchemaRoot)
         {
-            vectorSchemaRoots.add(vectorSchemaRoot);
+            if (root.isEmpty()) {
+                root = Optional.of(vectorSchemaRoot);
+            } else {
+                VectorSchemaRootAppender.append(root.get(), vectorSchemaRoot);
+            }
             return this;
         }
 
@@ -170,19 +143,9 @@ public class ArrowQueryResultRows
             return this;
         }
 
-        public Builder withExceptionConsumer(Consumer<Throwable> exceptionConsumer)
-        {
-            this.exceptionConsumer = exceptionConsumer;
-            return this;
-        }
-
         public ArrowQueryResultRows build()
         {
-            return new ArrowQueryResultRows(
-                    session,
-                    columns,
-                    vectorSchemaRoots.build(),
-                    exceptionConsumer);
+            return new ArrowQueryResultRows(columns, root);
         }
 
         private static List<ColumnAndType> combine(@Nullable List<Column> columns, @Nullable List<Type> types)
