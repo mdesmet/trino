@@ -173,6 +173,17 @@ public class TestArrowQueryResource
     }
 
     @Test
+    public void testSingleNullVarcharValue()
+            throws Exception
+    {
+        String sql = "SELECT CAST(NULL AS VARCHAR) as t";
+        assertArrowResult(sql, ImmutableList.of("""
+                t
+
+                """));
+    }
+
+    @Test
     public void testCount()
             throws Exception
     {
