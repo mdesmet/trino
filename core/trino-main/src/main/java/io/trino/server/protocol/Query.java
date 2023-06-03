@@ -63,7 +63,6 @@ import org.apache.arrow.vector.LargeVarCharVector;
 import org.apache.arrow.vector.VarCharVector;
 import org.apache.arrow.vector.VectorSchemaRoot;
 import org.apache.arrow.vector.types.pojo.ArrowType;
-import org.apache.arrow.vector.types.pojo.Field;
 
 import javax.annotation.concurrent.GuardedBy;
 import javax.annotation.concurrent.ThreadSafe;
@@ -707,7 +706,7 @@ class Query
                         VarCharVector valueVector = new VarCharVector(columnName, allocator);
                         for (int index = 0; index < block.getPositionCount(); index++) {
                             Slice valueSlice = type.getSlice(block, index);
-                            valueVector.setSafe(index, valueSlice.byteArray(), 0, valueSlice.length());
+                            valueVector.setSafe(index, valueSlice.getBytes(), 0, valueSlice.length());
                         }
                         valueVector.setValueCount(block.getPositionCount());
                         vectors.add(valueVector);
@@ -716,7 +715,7 @@ class Query
                         LargeVarCharVector valueVector = new LargeVarCharVector(columnName, allocator);
                         for (int index = 0; index < block.getPositionCount(); index++) {
                             Slice valueSlice = type.getSlice(block, index);
-                            valueVector.setSafe(index, valueSlice.byteArray(), 0, valueSlice.length());
+                            valueVector.setSafe(index, valueSlice.getBytes(), 0, valueSlice.length());
                         }
                         valueVector.setValueCount(block.getPositionCount());
                         vectors.add(valueVector);

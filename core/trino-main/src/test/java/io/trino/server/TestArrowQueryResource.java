@@ -13,62 +13,42 @@
  */
 package io.trino.server;
 
-import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Lists;
-import com.google.inject.Key;
 import io.airlift.http.client.HttpClient;
 import io.airlift.http.client.Request;
 import io.airlift.http.client.jetty.JettyHttpClient;
-import io.airlift.http.server.testing.TestingHttpServer;
-import io.airlift.json.JsonCodec;
-import io.airlift.json.JsonCodecFactory;
 import io.airlift.log.Logger;
 import io.trino.client.QueryResults;
-import io.trino.execution.QueryInfo;
 import io.trino.plugin.tpch.TpchPlugin;
 import io.trino.server.testing.TestingTrinoServer;
-import io.trino.spi.QueryId;
-import io.trino.tpch.TpchTable;
-import org.assertj.core.util.Files;
-import org.checkerframework.checker.nullness.qual.Nullable;
+import org.apache.arrow.memory.RootAllocator;
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.ipc.ArrowStreamReader;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
 
-import java.io.File;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.net.URI;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Base64;
 import java.util.List;
-import java.util.Optional;
 
 import static io.airlift.http.client.HttpUriBuilder.uriBuilderFrom;
 import static io.airlift.http.client.JsonResponseHandler.createJsonResponseHandler;
-import static io.airlift.http.client.Request.Builder.prepareDelete;
 import static io.airlift.http.client.Request.Builder.prepareGet;
 import static io.airlift.http.client.Request.Builder.preparePost;
-import static io.airlift.http.client.Request.Builder.preparePut;
 import static io.airlift.http.client.StaticBodyGenerator.createStaticBodyGenerator;
-import static io.airlift.http.client.StatusResponseHandler.createStatusResponseHandler;
 import static io.airlift.json.JsonCodec.jsonCodec;
 import static io.airlift.testing.Closeables.closeAll;
 import static io.trino.client.ProtocolHeaders.TRINO_HEADERS;
-import static io.trino.execution.QueryState.FAILED;
-import static io.trino.execution.QueryState.RUNNING;
-import static io.trino.spi.StandardErrorCode.ADMINISTRATIVELY_KILLED;
-import static io.trino.spi.StandardErrorCode.ADMINISTRATIVELY_PREEMPTED;
-import static io.trino.testing.TestingAccessControlManager.TestingPrivilegeType.KILL_QUERY;
-import static io.trino.testing.TestingAccessControlManager.privilege;
-import static io.trino.tracing.TracingJsonCodec.tracingJsonCodecFactory;
 import static java.nio.charset.StandardCharsets.UTF_8;
 import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.fail;
 
 @Test(singleThreaded = true)
 public class TestArrowQueryResource
 {
-    private static final JsonCodec<List<BasicQueryInfo>> BASIC_QUERY_INFO_CODEC = tracingJsonCodecFactory().listJsonCodec(BasicQueryInfo.class);
-
     private HttpClient client;
     private TestingTrinoServer server;
 
@@ -93,7 +73,24 @@ public class TestArrowQueryResource
     @Test
     public void testIdempotentResults()
     {
-        String sql = "SELECT returnflag FROM tpch.tiny.lineitem limit 10";
+        String sql = "SELECT * FROM tpch.tiny.nation Limit 7";
+
+        Request request = preparePost()
+                .setHeader(TRINO_HEADERS.requestUser(), "user")
+                .setHeader(TRINO_HEADERS.requestClientCapabilities(), "ARROW_RESULTS")
+                .setUri(uriBuilderFrom(server.getBaseUrl().resolve("/v1/statement")).build())
+                .setBodyGenerator(createStaticBodyGenerator(sql, UTF_8))
+                .build();
+
+        QueryResults queryResults = client.execute(request, createJsonResponseHandler(jsonCodec(QueryResults.class)));
+
+        pollForResults(queryResults.getNextUri(), client, Lists.newArrayList());
+    }
+
+    @Test
+    public void testMappingResults()
+    {
+        String sql = "SELECT nationkey,name,regionkey,comment FROM tpch.tiny.nation limit 10";
 
         Request request = preparePost()
                 .setHeader(TRINO_HEADERS.requestUser(), "user")
@@ -104,8 +101,37 @@ public class TestArrowQueryResource
 
         QueryResults queryResults = client.execute(request, createJsonResponseHandler(jsonCodec(QueryResults.class)));
         URI uri = queryResults.getNextUri();
-        ArrayList<@Nullable Object> datas = Lists.newArrayList();
+        ArrayList<Iterable<List<Object>>> chunks = Lists.newArrayList();
 
+        pollForResults(uri, client, chunks);
+
+        String firstChunk = chunks.get(0).iterator().next().get(0).toString();
+        try (ByteArrayInputStream inputStream = new ByteArrayInputStream(Base64.getDecoder().decode(firstChunk.getBytes(UTF_8)));
+                ArrowStreamReader reader = new ArrowStreamReader(inputStream, new RootAllocator(Long.MAX_VALUE))) {
+            VectorSchemaRoot root = reader.getVectorSchemaRoot();
+            reader.loadNextBatch();
+            root.getFieldVectors().forEach(vector -> {
+                System.out.printf("getName: %s%n", vector.getField().getName());
+                System.out.printf("getType: %s%n", vector.getField().getType());
+                System.out.println("values:");
+                for (int i = 0; i < vector.getValueCount(); i++) {
+                    System.out.println(vector.getObject(i));
+                }
+            });
+
+            assertEquals((root.getFieldVectors().get(0).getObject(0)).toString(), "0");
+            assertEquals((root.getFieldVectors().get(1).getObject(0)).toString(), "ALGERIA");
+            assertEquals((root.getFieldVectors().get(2).getObject(0)).toString(), "0");
+            assertEquals((root.getFieldVectors().get(3).getObject(0)).toString(), " haggle. carefully final deposits detect slyly agai");
+        }
+
+        catch (IOException e) {
+            e.printStackTrace();
+        }
+    }
+
+    private static void pollForResults(URI uri, HttpClient client, ArrayList<Iterable<List<Object>>> datas)
+    {
         while (uri != null) {
             QueryResults results = client.execute(
                     prepareGet()
@@ -114,25 +140,14 @@ public class TestArrowQueryResource
                             .setUri(uri)
                             .build(),
                     createJsonResponseHandler(jsonCodec(QueryResults.class)));
-            // if (results.getData() != null && results.getData().iterator().hasNext()
-            // ) {
-            //     List<Object> dataItem = results.getData().iterator().next();
-            //     if (!dataItem.isEmpty()) {
-            //             System.out.println("bang!");
-            //         HashMap firstItem = (HashMap)dataItem.get(0);
-            //         if (!firstItem.isEmpty()) {
-            //         }
-            //     }
-            // }
 
             Iterable<List<Object>> data = results.getData();
-            if (data != null){
+            if (data != null) {
                 datas.add(data);
             }
 
             uri = results.getNextUri();
         }
-        System.out.println(datas);
     }
 
     public static final class ArrowQueryRunnerMain
@@ -147,6 +162,34 @@ public class TestArrowQueryResource
             server.createCatalog("tpch", "tpch");
             Logger log = Logger.get(TestArrowQueryResource.class);
             log.info("======== SERVER STARTED ========");
+            log.info(server.getBaseUrl().toString());
+        }
+    }
+
+    public static final class QueryClientRunner
+    {
+        private static HttpClient client = new JettyHttpClient();
+
+        private QueryClientRunner() {}
+
+        public static void main(String[] args)
+                throws Exception
+        {
+            String sql = "SELECT nationkey,name,regionkey,comment FROM tpch.tiny.nation";
+
+            Request request = preparePost()
+                    .setHeader(TRINO_HEADERS.requestUser(), "user")
+                    .setHeader(TRINO_HEADERS.requestClientCapabilities(), "ARROW_RESULTS")
+                    .setUri(uriBuilderFrom(URI.create("http://127.0.0.1:56329").resolve("/v1/statement")).build())
+                    .setBodyGenerator(createStaticBodyGenerator(sql, UTF_8))
+                    .build();
+
+            QueryResults queryResults = client.execute(request, createJsonResponseHandler(jsonCodec(QueryResults.class)));
+            URI uri = queryResults.getNextUri();
+            ArrayList<Iterable<List<Object>>> datas = Lists.newArrayList();
+
+            pollForResults(uri, client, datas);
+            System.out.println(datas);
         }
     }
 }
