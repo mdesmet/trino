@@ -85,10 +85,10 @@ public class TestArrowQueryResource
     }
 
     @Test
-    public void testMultipleValues()
+    public void testNation()
             throws Exception
     {
-        String sql = "SELECT nationkey,name,regionkey,comment FROM tpch.tiny.nation order by 1 limit 10";
+        String sql = "SELECT * FROM tpch.tiny.nation order by 1 limit 10";
         assertArrowResult(sql, ImmutableList.of("""
                 nationkey	name	regionkey	comment
                 0	ALGERIA	0	 haggle. carefully final deposits detect slyly agai
@@ -101,6 +101,26 @@ public class TestArrowQueryResource
                 7	GERMANY	3	l platelets. regular accounts x-ray: unusual, regular acco
                 8	INDIA	2	ss excuses cajole slyly across the packages. deposits print aroun
                 9	INDONESIA	2	 slyly express asymptotes. regular deposits haggle slyly. carefully ironic hockey players sleep blithely. carefull
+                """));
+    }
+
+    @Test
+    public void testOrders()
+            throws Exception
+    {
+        String sql = "SELECT * FROM tpch.tiny.orders order by 1 limit 10";
+        assertArrowResult(sql, ImmutableList.of("""
+                orderkey	custkey	orderstatus	totalprice	orderdate	orderpriority	clerk	shippriority	comment
+                1	370	O	172799.49	9497	5-LOW	Clerk#000000951	0	nstructions sleep furiously among\s
+                2	781	O	38426.09	9831	1-URGENT	Clerk#000000880	0	 foxes. pending accounts at the pending, silent asymptot
+                3	1234	F	205654.3	8687	5-LOW	Clerk#000000955	0	sly final accounts boost. carefully regular ideas cajole carefully. depos
+                4	1369	O	56000.91	9414	5-LOW	Clerk#000000124	0	sits. slyly regular warthogs cajole. regular, regular theodolites acro
+                5	445	F	105367.67	8976	5-LOW	Clerk#000000925	0	quickly. bold deposits sleep slyly. packages use slyly
+                6	557	F	45523.1	8086	4-NOT SPECIFIED	Clerk#000000058	0	ggle. special, final requests are against the furiously specia
+                7	392	O	271885.66	9505	2-HIGH	Clerk#000000470	0	ly special requests\s
+                32	1301	O	198665.57	9327	2-HIGH	Clerk#000000616	0	ise blithely bold, regular requests. quickly unusual dep
+                33	670	F	146567.24	8700	3-MEDIUM	Clerk#000000409	0	uriously. furiously final request
+                34	611	O	73315.48	10428	3-MEDIUM	Clerk#000000223	0	ly final packages. fluffily final deposits wake blithely ideas. spe
                 """));
     }
 
