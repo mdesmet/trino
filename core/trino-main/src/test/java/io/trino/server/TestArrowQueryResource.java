@@ -162,10 +162,21 @@ public class TestArrowQueryResource
     }
 
     @Test
+    public void testSingleNullValue()
+            throws Exception
+    {
+        String sql = "SELECT NULL as t";
+        assertArrowResult(sql, ImmutableList.of("""
+                t
+                null
+                """));
+    }
+
+    @Test
     public void testCount()
             throws Exception
     {
-        String sql = "SELECT orderkey FROM tpch.tiny.orders";
+        String sql = "SELECT * FROM tpch.tiny.orders";
         List<VectorSchemaRoot> vectorSchemaRoots = getVectorSchemaRoots(sql);
         assertEquals(15000, vectorSchemaRoots.stream().map(VectorSchemaRoot::getRowCount).reduce(0, Integer::sum).intValue());
     }
