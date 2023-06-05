@@ -15,7 +15,6 @@ package io.trino.spi.type;
 
 import io.trino.spi.block.Block;
 import io.trino.spi.connector.ConnectorSession;
-import org.apache.arrow.vector.types.pojo.ArrowType;
 
 import java.util.Optional;
 import java.util.stream.LongStream;
@@ -25,7 +24,6 @@ public final class IntegerType
         extends AbstractIntType
 {
     public static final IntegerType INTEGER = new IntegerType();
-    public static final ArrowType.Int ARROW_TYPE = new ArrowType.Int(32, true);
 
     private IntegerType()
     {
@@ -87,11 +85,5 @@ public final class IntegerType
     public int hashCode()
     {
         return getClass().hashCode();
-    }
-
-    @Override
-    public Optional<ArrowType> mapToArrow()
-    {
-        return Optional.of(ARROW_TYPE);
     }
 }

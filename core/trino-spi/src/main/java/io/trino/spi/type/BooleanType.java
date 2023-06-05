@@ -22,7 +22,6 @@ import io.trino.spi.block.ByteArrayBlockBuilder;
 import io.trino.spi.block.PageBuilderStatus;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.function.ScalarOperator;
-import org.apache.arrow.vector.types.pojo.ArrowType;
 
 import java.util.Optional;
 
@@ -59,7 +58,7 @@ public final class BooleanType
     public static Block createBlockForSingleNonNullValue(boolean value)
     {
         byte byteValue = value ? (byte) 1 : 0;
-        return new ByteArrayBlock(1, Optional.empty(), new byte[]{byteValue});
+        return new ByteArrayBlock(1, Optional.empty(), new byte[] {byteValue});
     }
 
     private BooleanType()
@@ -149,12 +148,6 @@ public final class BooleanType
     public void writeBoolean(BlockBuilder blockBuilder, boolean value)
     {
         blockBuilder.writeByte(value ? 1 : 0).closeEntry();
-    }
-
-    @Override
-    public Optional<ArrowType> mapToArrow()
-    {
-        return Optional.of(ArrowType.Bool.INSTANCE);
     }
 
     @Override

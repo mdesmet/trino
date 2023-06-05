@@ -22,8 +22,6 @@ import io.trino.spi.block.PageBuilderStatus;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.function.IsNull;
 import io.trino.spi.function.ScalarOperator;
-import org.apache.arrow.vector.types.FloatingPointPrecision;
-import org.apache.arrow.vector.types.pojo.ArrowType;
 
 import java.util.Optional;
 
@@ -155,12 +153,6 @@ public final class DoubleType
         // The range for double is undefined because NaN is a special value that
         // is *not* in any reasonable definition of a range for this type.
         return Optional.empty();
-    }
-
-    @Override
-    public Optional<ArrowType> mapToArrow()
-    {
-        return Optional.of(new ArrowType.FloatingPoint(FloatingPointPrecision.DOUBLE));
     }
 
     @ScalarOperator(EQUAL)

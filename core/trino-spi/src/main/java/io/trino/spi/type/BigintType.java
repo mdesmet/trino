@@ -15,7 +15,6 @@ package io.trino.spi.type;
 
 import io.trino.spi.block.Block;
 import io.trino.spi.connector.ConnectorSession;
-import org.apache.arrow.vector.types.pojo.ArrowType;
 
 import java.util.Optional;
 import java.util.stream.LongStream;
@@ -25,7 +24,6 @@ public final class BigintType
         extends AbstractLongType
 {
     public static final BigintType BIGINT = new BigintType();
-    public static final ArrowType.Int ARROW_TYPE = new ArrowType.Int(64, true);
 
     private BigintType()
     {
@@ -85,11 +83,5 @@ public final class BigintType
     public Optional<Stream<?>> getDiscreteValues(Range range)
     {
         return Optional.of(LongStream.rangeClosed((long) range.getMin(), (long) range.getMax()).boxed());
-    }
-
-    @Override
-    public Optional<ArrowType> mapToArrow()
-    {
-        return Optional.of(ARROW_TYPE);
     }
 }

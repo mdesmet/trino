@@ -671,7 +671,7 @@ class Query
                 Type type = types.get(channelIndex);
                 String columnName = columns.get(channelIndex).getName();
 
-                ArrowType arrowType = type.mapToArrow().orElseThrow(() -> new RuntimeException("Trino type %s must support Arrow mapping".formatted(type)));
+                ArrowType arrowType = ArrowTypesMapper.mapToArrow(type).orElseThrow(() -> new RuntimeException("Trino type %s must support Arrow mapping".formatted(type)));
 
                 switch (arrowType.getTypeID()) {
                     case Null -> {

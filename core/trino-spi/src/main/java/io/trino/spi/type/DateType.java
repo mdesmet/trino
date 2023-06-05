@@ -15,8 +15,6 @@ package io.trino.spi.type;
 
 import io.trino.spi.block.Block;
 import io.trino.spi.connector.ConnectorSession;
-import org.apache.arrow.vector.types.DateUnit;
-import org.apache.arrow.vector.types.pojo.ArrowType;
 
 import java.util.Optional;
 
@@ -88,11 +86,5 @@ public final class DateType
     public int hashCode()
     {
         return getClass().hashCode();
-    }
-
-    @Override
-    public Optional<ArrowType> mapToArrow()
-    {
-        return Optional.of(new ArrowType.Date(DateUnit.DAY));
     }
 }
