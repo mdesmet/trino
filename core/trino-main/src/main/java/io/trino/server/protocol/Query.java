@@ -76,6 +76,7 @@ import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriInfo;
 
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -106,11 +107,13 @@ import static io.trino.server.protocol.Slug.Context.EXECUTING_QUERY;
 import static io.trino.spi.StandardErrorCode.SERIALIZATION_ERROR;
 import static io.trino.util.Failures.toFailure;
 import static io.trino.util.MoreLists.mappedCopy;
+import static java.lang.Math.toIntExact;
 import static java.util.Objects.requireNonNull;
 
 @ThreadSafe
 class Query
 {
+    private static final BufferAllocator ROOT_ALLOCATOR = new RootAllocator();
     private static final Logger log = Logger.get(Query.class);
 
     private final QueryManager queryManager;
@@ -118,7 +121,6 @@ class Query
     private final Session session;
     private final Slug slug;
     private final Optional<URI> queryInfoUrl;
-    private final static BufferAllocator ROOT_ALLOCATOR = new RootAllocator();
 
     @GuardedBy("this")
     private final ExchangeDataSource exchangeDataSource;
@@ -662,7 +664,7 @@ class Query
         {
             // todo: read from Slice, but for now just use the PageDeserializer
             Page page = deserializer.deserialize(slice);
-            List<FieldVector> vectors = Lists.newArrayList();
+            List<FieldVector> vectors = new ArrayList();
 
             for (int channelIndex = 0; channelIndex < page.getChannelCount(); channelIndex++) {
                 Block block = page.getBlock(channelIndex);
@@ -698,7 +700,7 @@ class Query
                     case Int -> {
                         IntVector valueVector = new IntVector(columnName, allocator);
                         for (int index = 0; index < block.getPositionCount(); index++) {
-                            valueVector.setSafe(index, Math.toIntExact(type.getLong(block, index)));
+                            valueVector.setSafe(index, toIntExact(type.getLong(block, index)));
                         }
                         valueVector.setValueCount(block.getPositionCount());
                         vectors.add(valueVector);
@@ -752,7 +754,7 @@ class Query
                     case Date -> {
                         DateDayVector valueVector = new DateDayVector(columnName, allocator);
                         for (int index = 0; index < block.getPositionCount(); index++) {
-                            valueVector.setSafe(index, Math.toIntExact(type.getLong(block, index)));
+                            valueVector.setSafe(index, toIntExact(type.getLong(block, index)));
                         }
                         valueVector.setValueCount(block.getPositionCount());
                         vectors.add(valueVector);

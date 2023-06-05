@@ -14,7 +14,6 @@
 package io.trino.server.protocol;
 
 import com.google.common.collect.ImmutableList;
-import com.google.common.collect.Lists;
 import com.nimbusds.jose.util.Base64;
 import io.trino.client.Column;
 import io.trino.spi.type.Type;
@@ -24,6 +23,7 @@ import org.apache.arrow.vector.ipc.ArrowStreamWriter;
 import org.apache.arrow.vector.util.VectorSchemaRootAppender;
 
 import javax.annotation.Nullable;
+
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.channels.Channels;
@@ -128,7 +128,8 @@ public class ArrowQueryResultRows
         {
             if (root.isEmpty()) {
                 root = Optional.of(vectorSchemaRoot);
-            } else {
+            }
+            else {
                 VectorSchemaRootAppender.append(root.get(), vectorSchemaRoot);
             }
             return this;
