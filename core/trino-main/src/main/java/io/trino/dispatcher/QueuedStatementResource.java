@@ -167,11 +167,16 @@ public class QueuedStatementResource
             @Context HttpHeaders httpHeaders,
             @Context UriInfo uriInfo)
     {
+        // take a toggle to turn on Arrow protocol
         if (isNullOrEmpty(statement)) {
             throw badRequest(BAD_REQUEST, "SQL statement is empty");
         }
 
         Query query = registerQuery(statement, servletRequest, httpHeaders);
+        // instead of returning a QueryResults object (single JSON with partial results and a link to next page),
+        // return a link to s3 Arrow file with all results
+
+        // Can we write to and read from Arrow results file in s3 at the same time? No, at least not to a single file.
 
         return createQueryResultsResponse(query.getQueryResults(query.getLastToken(), uriInfo));
     }

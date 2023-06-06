@@ -48,7 +48,7 @@ import static io.trino.client.ClientStandardTypes.MAP;
 import static io.trino.client.ClientStandardTypes.ROW;
 import static io.trino.client.ClientStandardTypes.TIMESTAMP;
 import static io.trino.client.ClientStandardTypes.TIMESTAMP_WITH_TIME_ZONE;
-import static io.trino.server.protocol.QueryResultRows.queryResultRowsBuilder;
+import static io.trino.server.protocol.RowOrientedQueryResultRows.rowOrientedQueryResultRowsBuilder;
 import static io.trino.spi.type.TypeSignature.mapType;
 import static io.trino.type.InternalTypeManager.TESTING_TYPE_MANAGER;
 import static java.util.Collections.singletonList;
@@ -68,7 +68,7 @@ public class TestQueryResultRows
     @Test
     public void shouldNotReturnValues()
     {
-        QueryResultRows rows = QueryResultRows.empty(getSession());
+        RowOrientedQueryResultRows rows = RowOrientedQueryResultRows.empty(getSession());
 
         assertThat((Iterable<? extends List<Object>>) rows).as("rows").isEmpty();
         assertThat(getAllValues(rows)).hasSize(0);
@@ -81,7 +81,7 @@ public class TestQueryResultRows
     {
         Column column = BOOLEAN_COLUMN.apply("_col0");
 
-        QueryResultRows rows = queryResultRowsBuilder(getSession())
+        RowOrientedQueryResultRows rows = rowOrientedQueryResultRowsBuilder(getSession())
                 .withSingleBooleanValue(column, true)
                 .build();
 
@@ -96,7 +96,7 @@ public class TestQueryResultRows
         Column column = BIGINT_COLUMN.apply("_col0");
         long value = 10123;
 
-        QueryResultRows rows = queryResultRowsBuilder(getSession())
+        RowOrientedQueryResultRows rows = rowOrientedQueryResultRowsBuilder(getSession())
                 .withColumnsAndTypes(ImmutableList.of(column), ImmutableList.of(BigintType.BIGINT))
                 .addPages(rowPagesBuilder(BigintType.BIGINT).row(value).build())
                 .build();
@@ -114,7 +114,7 @@ public class TestQueryResultRows
     {
         Column column = BOOLEAN_COLUMN.apply("_col0");
 
-        QueryResultRows rows = queryResultRowsBuilder(getSession())
+        RowOrientedQueryResultRows rows = rowOrientedQueryResultRowsBuilder(getSession())
                 .withSingleBooleanValue(column, false)
                 .build();
 
@@ -144,7 +144,7 @@ public class TestQueryResultRows
                 .build();
 
         TestExceptionConsumer exceptionConsumer = new TestExceptionConsumer();
-        QueryResultRows rows = queryResultRowsBuilder(getSession())
+        RowOrientedQueryResultRows rows = rowOrientedQueryResultRowsBuilder(getSession())
                 .withColumnsAndTypes(columns, types)
                 .addPages(pages)
                 .withExceptionConsumer(exceptionConsumer)
@@ -185,7 +185,7 @@ public class TestQueryResultRows
                 .build();
 
         TestExceptionConsumer exceptionConsumer = new TestExceptionConsumer();
-        QueryResultRows rows = queryResultRowsBuilder(getSession())
+        RowOrientedQueryResultRows rows = rowOrientedQueryResultRowsBuilder(getSession())
                 .withColumnsAndTypes(columns, types)
                 .withExceptionConsumer(exceptionConsumer)
                 .addPages(pages)
@@ -243,7 +243,7 @@ public class TestQueryResultRows
                 .build();
 
         TestExceptionConsumer exceptionConsumer = new TestExceptionConsumer();
-        QueryResultRows rows = queryResultRowsBuilder(getSession())
+        RowOrientedQueryResultRows rows = rowOrientedQueryResultRowsBuilder(getSession())
                 .withColumnsAndTypes(columns, types)
                 .withExceptionConsumer(exceptionConsumer)
                 .addPages(pages)
@@ -270,7 +270,7 @@ public class TestQueryResultRows
                 .build();
 
         TestExceptionConsumer exceptionConsumer = new TestExceptionConsumer();
-        QueryResultRows rows = queryResultRowsBuilder(getSession())
+        RowOrientedQueryResultRows rows = rowOrientedQueryResultRowsBuilder(getSession())
                 .withColumnsAndTypes(columns, types)
                 .withExceptionConsumer(exceptionConsumer)
                 .addPages(pages)
@@ -296,7 +296,7 @@ public class TestQueryResultRows
                 .build();
 
         TestExceptionConsumer exceptionConsumer = new TestExceptionConsumer();
-        QueryResultRows rows = queryResultRowsBuilder(getSession())
+        RowOrientedQueryResultRows rows = rowOrientedQueryResultRowsBuilder(getSession())
                 .withColumnsAndTypes(columns, types)
                 .withExceptionConsumer(exceptionConsumer)
                 .addPages(pages)
@@ -324,7 +324,7 @@ public class TestQueryResultRows
                 .build();
 
         TestExceptionConsumer exceptionConsumer = new TestExceptionConsumer();
-        QueryResultRows rows = queryResultRowsBuilder(getSession())
+        RowOrientedQueryResultRows rows = rowOrientedQueryResultRowsBuilder(getSession())
                 .withColumnsAndTypes(columns, types)
                 .withExceptionConsumer(exceptionConsumer)
                 .addPages(pages)
@@ -356,7 +356,7 @@ public class TestQueryResultRows
                 .build();
 
         TestExceptionConsumer exceptionConsumer = new TestExceptionConsumer();
-        QueryResultRows rows = queryResultRowsBuilder(getSession())
+        RowOrientedQueryResultRows rows = rowOrientedQueryResultRowsBuilder(getSession())
                 .withColumnsAndTypes(columns, types)
                 .withExceptionConsumer(exceptionConsumer)
                 .addPages(pages)
@@ -378,7 +378,7 @@ public class TestQueryResultRows
     @Test
     public void shouldNotThrowWhenDataAndColumnsAreMissing()
     {
-        QueryResultRows.empty(getSession());
+        RowOrientedQueryResultRows.empty(getSession());
     }
 
     @Test
@@ -391,7 +391,7 @@ public class TestQueryResultRows
                 .row(0, null)
                 .build();
 
-        assertThatThrownBy(() -> queryResultRowsBuilder(getSession()).addPages(pages).withColumnsAndTypes(columns, types).build())
+        assertThatThrownBy(() -> rowOrientedQueryResultRowsBuilder(getSession()).addPages(pages).withColumnsAndTypes(columns, types).build())
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("columns and types size mismatch");
     }
@@ -405,7 +405,7 @@ public class TestQueryResultRows
                 .row(0, null)
                 .build();
 
-        assertThatThrownBy(() -> queryResultRowsBuilder(getSession()).addPages(pages).withColumnsAndTypes(null, types).build())
+        assertThatThrownBy(() -> rowOrientedQueryResultRowsBuilder(getSession()).addPages(pages).withColumnsAndTypes(null, types).build())
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("columns and types must be present at the same time");
     }
@@ -413,7 +413,7 @@ public class TestQueryResultRows
     @Test
     public void shouldAcceptNullColumnsAndTypes()
     {
-        queryResultRowsBuilder(getSession())
+        rowOrientedQueryResultRowsBuilder(getSession())
                 .withColumnsAndTypes(null, null)
                 .build();
     }
@@ -428,7 +428,7 @@ public class TestQueryResultRows
                 .row(0, null)
                 .build();
 
-        assertThatThrownBy(() -> queryResultRowsBuilder(getSession()).addPages(pages).withColumnsAndTypes(columns, null).build())
+        assertThatThrownBy(() -> rowOrientedQueryResultRowsBuilder(getSession()).addPages(pages).withColumnsAndTypes(columns, null).build())
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("columns and types must be present at the same time");
     }
@@ -440,12 +440,12 @@ public class TestQueryResultRows
                 .row(0, null)
                 .build();
 
-        assertThatThrownBy(() -> queryResultRowsBuilder(getSession()).addPages(pages).build())
+        assertThatThrownBy(() -> rowOrientedQueryResultRowsBuilder(getSession()).addPages(pages).build())
                 .isInstanceOf(VerifyException.class)
                 .hasMessage("data present without columns and types");
     }
 
-    private static List<List<Object>> getAllValues(QueryResultRows rows)
+    private static List<List<Object>> getAllValues(RowOrientedQueryResultRows rows)
     {
         ImmutableList.Builder<List<Object>> builder = ImmutableList.builder();
 

@@ -1621,13 +1621,32 @@
 
             <dependency>
                 <groupId>org.apache.arrow</groupId>
+                <artifactId>arrow-format</artifactId>
+                <version>${dep.arrow.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.apache.arrow</groupId>
                 <artifactId>arrow-memory-core</artifactId>
                 <version>${dep.arrow.version}</version>
             </dependency>
 
             <dependency>
                 <groupId>org.apache.arrow</groupId>
+                <artifactId>arrow-memory-netty</artifactId>
+                <version>${dep.arrow.version}</version>
+                <scope>test</scope>
+            </dependency>
+
+            <dependency>
+                <groupId>org.apache.arrow</groupId>
                 <artifactId>arrow-vector</artifactId>
+                <version>${dep.arrow.version}</version>
+            </dependency>
+
+            <dependency>
+                <groupId>org.apache.arrow</groupId>
+                <artifactId>flight-core</artifactId>
                 <version>${dep.arrow.version}</version>
             </dependency>
 
@@ -2121,6 +2140,89 @@
                                 </conflictingDependencies>
                                 <resources>
                                     <resource>mozilla/public-suffix-list.txt</resource>
+                                </resources>
+                            </exception>
+                            <exception>
+                                <conflictingDependencies>
+                                    <dependency>
+                                        <groupId>org.apache.httpcomponents.client5</groupId>
+                                        <artifactId>httpclient5</artifactId>
+                                    </dependency>
+                                    <dependency>
+                                        <groupId>org.apache.httpcomponents</groupId>
+                                        <artifactId>httpclient</artifactId>
+                                    </dependency>
+                                </conflictingDependencies>
+                                <resources>
+                                    <resource>mozilla/public-suffix-list.txt</resource>
+                                </resources>
+                            </exception>
+                            <exception>
+                                <conflictingDependencies>
+                                    <dependency>
+                                        <groupId>com.clickhouse</groupId>
+                                        <artifactId>clickhouse-jdbc</artifactId>
+                                    </dependency>
+                                    <dependency>
+                                        <groupId>org.apache.httpcomponents</groupId>
+                                        <artifactId>httpclient</artifactId>
+                                    </dependency>
+                                </conflictingDependencies>
+                                <resources>
+                                    <resource>mozilla/public-suffix-list.txt</resource>
+                                </resources>
+                            </exception>
+                            <exception>
+                                <conflictingDependencies>
+                                    <dependency>
+                                        <groupId>org.apache.arrow</groupId>
+                                        <artifactId>arrow-format</artifactId>
+                                    </dependency>
+                                    <dependency>
+                                        <groupId>org.apache.arrow</groupId>
+                                        <artifactId>arrow-memory-core</artifactId>
+                                    </dependency>
+                                    <dependency>
+                                        <groupId>org.apache.arrow</groupId>
+                                        <artifactId>arrow-memory-netty</artifactId>
+                                    </dependency>
+                                    <dependency>
+                                        <groupId>org.apache.arrow</groupId>
+                                        <artifactId>arrow-vector</artifactId>
+                                    </dependency>
+                                </conflictingDependencies>
+                                <resources>
+                                    <resource>arrow-git.properties</resource>
+                                </resources>
+                            </exception>
+                            <exception>
+                                <conflictingDependencies>
+                                    <dependency>
+                                        <groupId>org.apache.arrow</groupId>
+                                        <artifactId>arrow-vector</artifactId>
+                                    </dependency>
+                                    <dependency>
+                                        <groupId>org.apache.calcite</groupId>
+                                        <artifactId>calcite-core</artifactId>
+                                    </dependency>
+                                </conflictingDependencies>
+                                <resources>
+                                    <resource>codegen/config.fmpp</resource>
+                                </resources>
+                            </exception>
+                            <exception>
+                                <conflictingDependencies>
+                                    <dependency>
+                                        <groupId>org.apache.arrow</groupId>
+                                        <artifactId>arrow-vector</artifactId>
+                                    </dependency>
+                                    <dependency>
+                                        <groupId>com.linkedin.calcite</groupId>
+                                        <artifactId>calcite-core</artifactId>
+                                    </dependency>
+                                </conflictingDependencies>
+                                <resources>
+                                    <resource>codegen/config.fmpp</resource>
                                 </resources>
                             </exception>
                             <exception>

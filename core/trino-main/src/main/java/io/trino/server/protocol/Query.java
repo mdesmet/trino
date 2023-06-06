@@ -47,12 +47,27 @@ import io.trino.operator.DirectExchangeClientSupplier;
 import io.trino.spi.ErrorCode;
 import io.trino.spi.Page;
 import io.trino.spi.QueryId;
+import io.trino.spi.block.Block;
 import io.trino.spi.block.BlockEncodingSerde;
 import io.trino.spi.exchange.ExchangeId;
 import io.trino.spi.security.SelectedRole;
 import io.trino.spi.type.Type;
 import io.trino.transaction.TransactionId;
 import io.trino.util.Ciphers;
+import org.apache.arrow.memory.BufferAllocator;
+import org.apache.arrow.memory.RootAllocator;
+import org.apache.arrow.vector.BitVector;
+import org.apache.arrow.vector.DateDayVector;
+import org.apache.arrow.vector.DateMilliVector;
+import org.apache.arrow.vector.FieldVector;
+import org.apache.arrow.vector.Float8Vector;
+import org.apache.arrow.vector.IntVector;
+import org.apache.arrow.vector.LargeVarCharVector;
+import org.apache.arrow.vector.NullVector;
+import org.apache.arrow.vector.VarCharVector;
+import org.apache.arrow.vector.VectorSchemaRoot;
+import org.apache.arrow.vector.types.pojo.ArrowType;
+import org.apache.arrow.vector.util.Text;
 
 import javax.annotation.concurrent.GuardedBy;
 import javax.annotation.concurrent.ThreadSafe;
@@ -61,6 +76,7 @@ import javax.ws.rs.core.Response;
 import javax.ws.rs.core.UriInfo;
 
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
@@ -82,19 +98,22 @@ import static io.trino.SystemSessionProperties.isExchangeCompressionEnabled;
 import static io.trino.execution.QueryState.FAILED;
 import static io.trino.execution.QueryState.FINISHING;
 import static io.trino.memory.context.AggregatedMemoryContext.newSimpleAggregatedMemoryContext;
+import static io.trino.server.protocol.ArrowQueryResultRows.arrowQueryResultRowsBuilder;
 import static io.trino.server.protocol.ProtocolUtil.createColumn;
 import static io.trino.server.protocol.ProtocolUtil.toStatementStats;
 import static io.trino.server.protocol.QueryInfoUrlFactory.getQueryInfoUri;
-import static io.trino.server.protocol.QueryResultRows.queryResultRowsBuilder;
+import static io.trino.server.protocol.RowOrientedQueryResultRows.rowOrientedQueryResultRowsBuilder;
 import static io.trino.server.protocol.Slug.Context.EXECUTING_QUERY;
 import static io.trino.spi.StandardErrorCode.SERIALIZATION_ERROR;
 import static io.trino.util.Failures.toFailure;
 import static io.trino.util.MoreLists.mappedCopy;
+import static java.lang.Math.toIntExact;
 import static java.util.Objects.requireNonNull;
 
 @ThreadSafe
 class Query
 {
+    private static final BufferAllocator ROOT_ALLOCATOR = new RootAllocator();
     private static final Logger log = Logger.get(Query.class);
 
     private final QueryManager queryManager;
@@ -471,7 +490,7 @@ class Query
             resultRows = removePagesFromExchange(queryInfo, targetResultSize.toBytes());
         }
         else {
-            resultRows = queryResultRowsBuilder(session).build();
+            resultRows = rowOrientedQueryResultRowsBuilder(session).build();
         }
 
         if ((queryInfo.getUpdateType() != null) && (updateCount == null)) {
@@ -557,43 +576,214 @@ class Query
     private synchronized QueryResultRows removePagesFromExchange(QueryInfo queryInfo, long targetResultBytes)
     {
         if (!resultsConsumed && queryInfo.getOutputStage().isEmpty()) {
-            return queryResultRowsBuilder(session)
+            return rowOrientedQueryResultRowsBuilder(session)
                     .withColumnsAndTypes(ImmutableList.of(), ImmutableList.of())
                     .build();
         }
-        // Remove as many pages as possible from the exchange until just greater than DESIRED_RESULT_BYTES
-        // NOTE: it is critical that query results are created for the pages removed from the exchange
-        // client while holding the lock because the query may transition to the finished state when the
-        // last page is removed.  If another thread observes this state before the response is cached
-        // the pages will be lost.
-        QueryResultRows.Builder resultBuilder = queryResultRowsBuilder(session)
-                // Intercept serialization exceptions and fail query if it's still possible.
-                // Put serialization exception aside to return failed query result.
-                .withExceptionConsumer(this::handleSerializationException)
-                .withColumnsAndTypes(columns, types);
 
-        try {
-            long bytes = 0;
-            while (bytes < targetResultBytes) {
-                Slice serializedPage = exchangeDataSource.pollPage();
-                if (serializedPage == null) {
-                    break;
+        if (session.getClientCapabilities().contains(ClientCapabilities.ARROW_RESULTS.toString())) {
+            BufferAllocator queryAllocator = ROOT_ALLOCATOR.newChildAllocator(queryId.toString(), Long.MAX_VALUE, Long.MAX_VALUE);
+            ArrowPageConverter arrowPageConverter = new ArrowPageConverter(deserializer, queryAllocator);
+            ArrowQueryResultRows.Builder resultBuilder = arrowQueryResultRowsBuilder();
+            try {
+                while (queryAllocator.getAllocatedMemory() < targetResultBytes) {
+                    // here we get pages from the exchange, is this a good place to do Arrow conversion?
+
+                    // Idea 1: use Arrow Flight to stream data to the client
+                    // Idea 2: chunk data into files, upload them and send JSON with links to the client (Snowflake JDBC driver does this)
+
+                    Slice serializedPage = exchangeDataSource.pollPage();
+                    if (serializedPage == null) {
+                        break;
+                    }
+                    VectorSchemaRoot vectorSchemaRoot = arrowPageConverter.convertToArrowPage(serializedPage, types, columns); // TODO: map here from Slice to VectorSchemaRoot
+                    resultBuilder.addVectorSchemaRoot(vectorSchemaRoot)
+                            .withColumnsAndTypes(columns, types);
                 }
-
-                Page page = deserializer.deserialize(serializedPage);
-                bytes += page.getLogicalSizeInBytes();
-                resultBuilder.addPage(page);
+                if (exchangeDataSource.isFinished()) {
+                    exchangeDataSource.close();
+                    deserializer = null; // null to reclaim memory of PagesSerde which does not expose explicit lifecycle
+                }
             }
-            if (exchangeDataSource.isFinished()) {
-                exchangeDataSource.close();
-                deserializer = null; // null to reclaim memory of PagesSerde which does not expose explicit lifecycle
+            catch (Throwable cause) {
+                queryManager.failQuery(queryId, cause);
             }
+
+            return resultBuilder.build();
         }
-        catch (Throwable cause) {
-            queryManager.failQuery(queryId, cause);
+        else {
+            // Remove as many pages as possible from the exchange until just greater than DESIRED_RESULT_BYTES
+            // NOTE: it is critical that query results are created for the pages removed from the exchange
+            // client while holding the lock because the query may transition to the finished state when the
+            // last page is removed.  If another thread observes this state before the response is cached
+            // the pages will be lost.
+            RowOrientedQueryResultRows.Builder resultBuilder = rowOrientedQueryResultRowsBuilder(session)
+                    // Intercept serialization exceptions and fail query if it's still possible.
+                    // Put serialization exception aside to return failed query result.
+                    .withExceptionConsumer(this::handleSerializationException)
+                    .withColumnsAndTypes(columns, types);
+
+            try {
+                long bytes = 0;
+                while (bytes < targetResultBytes) {
+                    Slice serializedPage = exchangeDataSource.pollPage();
+                    if (serializedPage == null) {
+                        break;
+                    }
+
+                    Page page = deserializer.deserialize(serializedPage);
+                    bytes += page.getLogicalSizeInBytes();
+                    resultBuilder.addPage(page);
+                }
+                if (exchangeDataSource.isFinished()) {
+                    exchangeDataSource.close();
+                    deserializer = null; // null to reclaim memory of PagesSerde which does not expose explicit lifecycle
+                }
+            }
+            catch (Throwable cause) {
+                queryManager.failQuery(queryId, cause);
+            }
+
+            return resultBuilder.build();
+        }
+    }
+
+    private static class ArrowPageConverter
+    {
+        private final PageDeserializer deserializer;
+
+        private final BufferAllocator allocator;
+
+        public ArrowPageConverter(PageDeserializer deserializer, BufferAllocator allocator)
+        {
+            this.deserializer = deserializer;
+            this.allocator = allocator;
         }
 
-        return resultBuilder.build();
+        public VectorSchemaRoot convertToArrowPage(Slice slice, List<Type> types, List<Column> columns)
+        {
+            // todo: read from Slice, but for now just use the PageDeserializer
+            Page page = deserializer.deserialize(slice);
+            List<FieldVector> vectors = new ArrayList();
+
+            for (int channelIndex = 0; channelIndex < page.getChannelCount(); channelIndex++) {
+                Block block = page.getBlock(channelIndex);
+                Type type = types.get(channelIndex);
+                String columnName = columns.get(channelIndex).getName();
+
+                ArrowType arrowType = ArrowTypesMapper.mapToArrow(type).orElseThrow(() -> new RuntimeException("Trino type %s must support Arrow mapping".formatted(type)));
+
+                switch (arrowType.getTypeID()) {
+                    case Null -> {
+                        NullVector nullVector = new NullVector(columnName);
+                        nullVector.setValueCount(block.getPositionCount());
+                        vectors.add(nullVector);
+                    }
+                    case Struct -> {
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
+                    }
+                    case List -> {
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
+                    }
+                    case LargeList -> {
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
+                    }
+                    case FixedSizeList -> {
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
+                    }
+                    case Union -> {
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
+                    }
+                    case Map -> {
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
+                    }
+                    case Int -> {
+                        IntVector valueVector = new IntVector(columnName, allocator);
+                        for (int index = 0; index < block.getPositionCount(); index++) {
+                            valueVector.setSafe(index, toIntExact(type.getLong(block, index)));
+                        }
+                        valueVector.setValueCount(block.getPositionCount());
+                        vectors.add(valueVector);
+                    }
+                    case FloatingPoint -> {
+                        Float8Vector valueVector = new Float8Vector(columnName, allocator);
+                        for (int index = 0; index < block.getPositionCount(); index++) {
+                            valueVector.setSafe(index, type.getDouble(block, index));
+                        }
+                        valueVector.setValueCount(block.getPositionCount());
+                        vectors.add(valueVector);
+                    }
+                    case Utf8 -> {
+                        VarCharVector valueVector = new VarCharVector(columnName, allocator);
+                        for (int index = 0; index < block.getPositionCount(); index++) {
+                            Slice valueSlice = type.getSlice(block, index);
+                            valueVector.setSafe(index, new Text(valueSlice.toStringUtf8()));
+                        }
+                        valueVector.setValueCount(block.getPositionCount());
+                        vectors.add(valueVector);
+                    }
+                    case LargeUtf8 -> {
+                        LargeVarCharVector valueVector = new LargeVarCharVector(columnName, allocator);
+                        for (int index = 0; index < block.getPositionCount(); index++) {
+                            Slice valueSlice = type.getSlice(block, index);
+                            valueVector.setSafe(index, valueSlice.getBytes(), 0, valueSlice.length());
+                        }
+                        valueVector.setValueCount(block.getPositionCount());
+                        vectors.add(valueVector);
+                    }
+                    case Binary -> {
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
+                    }
+                    case LargeBinary -> {
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
+                    }
+                    case FixedSizeBinary -> {
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
+                    }
+                    case Bool -> {
+                        BitVector valueVector = new BitVector(columnName, allocator);
+                        for (int index = 0; index < block.getPositionCount(); index++) {
+                            valueVector.setSafe(index, type.getBoolean(block, index) ? 1 : 0);
+                        }
+                        valueVector.setValueCount(block.getPositionCount());
+                        vectors.add(valueVector);
+                    }
+                    case Decimal -> {
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
+                    }
+                    case Date -> {
+                        DateDayVector valueVector = new DateDayVector(columnName, allocator);
+                        for (int index = 0; index < block.getPositionCount(); index++) {
+                            valueVector.setSafe(index, toIntExact(type.getLong(block, index)));
+                        }
+                        valueVector.setValueCount(block.getPositionCount());
+                        vectors.add(valueVector);
+                    }
+                    case Time -> {
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
+                    }
+                    case Timestamp -> {
+                        DateMilliVector valueVector = new DateMilliVector(columnName, allocator);
+                        for (int index = 0; index < block.getPositionCount(); index++) {
+                            long value = type.getLong(block, index);
+                            valueVector.setSafe(index, value);
+                        }
+                        valueVector.setValueCount(block.getPositionCount());
+                        vectors.add(valueVector);
+                    }
+                    case Interval -> {
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
+                    }
+                    case Duration -> {
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
+                    }
+                    case NONE -> {
+                        throw new IllegalArgumentException("Type not supported: " + arrowType.getTypeID());
+                    }
+                }
+            }
+            return new VectorSchemaRoot(vectors);
+        }
     }
 
     private void closeExchangeIfNecessary(QueryInfo queryInfo)

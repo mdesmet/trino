@@ -25,6 +25,9 @@ import io.trino.spi.type.FixedWidthType;
 import io.trino.spi.type.TypeOperatorDeclaration;
 import io.trino.spi.type.TypeOperators;
 import io.trino.spi.type.TypeSignature;
+import org.apache.arrow.vector.types.pojo.ArrowType;
+
+import java.util.Optional;
 
 import static com.google.common.base.Preconditions.checkArgument;
 import static io.trino.spi.function.OperatorType.COMPARISON_UNORDERED_LAST;
@@ -132,6 +135,11 @@ public final class UnknownType
         // However, some logic (e.g. AbstractMinMaxBy) rely on writing a default value before the null check.
         checkArgument(!value);
         blockBuilder.appendNull();
+    }
+
+    public Optional<ArrowType> mapToArrow()
+    {
+        return Optional.of(ArrowType.Null.INSTANCE);
     }
 
     @ScalarOperator(EQUAL)
