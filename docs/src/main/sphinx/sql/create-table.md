@@ -3,7 +3,7 @@
 ## Synopsis
 
 ```text
-CREATE TABLE [ IF NOT EXISTS ]
+CREATE [ OR REPLACE ] TABLE [ IF NOT EXISTS ]
 table_name (
   { column_name data_type [ NOT NULL ]
       [ COMMENT comment ]
@@ -22,8 +22,14 @@ table_name (
 Create a new, empty table with the specified columns.
 Use {doc}`create-table-as` to create a table with data.
 
+The optional `OR REPLACE` clause can be used to replace
+an existing table with a completely new definition. It depends
+on connector support.
+
 The optional `IF NOT EXISTS` clause causes the error to be
 suppressed if the table already exists.
+
+`OR REPLACE` and `IF NOT EXISTS` cannot be used together.
 
 The optional `WITH` clause can be used to set properties
 on the newly created table or on single columns.  To list all available table
