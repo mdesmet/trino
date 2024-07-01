@@ -24,6 +24,8 @@ import io.trino.parquet.ParquetCorruptionException;
 import io.trino.parquet.ParquetDataSource;
 import io.trino.parquet.ParquetDataSourceId;
 import io.trino.parquet.ParquetReaderOptions;
+import io.trino.parquet.metadata.FileMetadata;
+import io.trino.parquet.metadata.ParquetMetadata;
 import io.trino.parquet.predicate.TupleDomainParquetPredicate;
 import io.trino.parquet.reader.MetadataReader;
 import io.trino.parquet.reader.ParquetReader;
@@ -48,8 +50,6 @@ import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.type.Decimals;
 import io.trino.spi.type.TypeSignature;
 import org.apache.parquet.column.ColumnDescriptor;
-import org.apache.parquet.hadoop.metadata.FileMetaData;
-import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 import org.apache.parquet.io.MessageColumnIO;
 import org.apache.parquet.schema.MessageType;
 import org.joda.time.DateTimeZone;
@@ -87,6 +87,7 @@ import static io.trino.plugin.hudi.HudiErrorCode.HUDI_CURSOR_ERROR;
 import static io.trino.plugin.hudi.HudiErrorCode.HUDI_INVALID_PARTITION_VALUE;
 import static io.trino.plugin.hudi.HudiErrorCode.HUDI_UNSUPPORTED_FILE_FORMAT;
 import static io.trino.plugin.hudi.HudiSessionProperties.getParquetSmallFileThreshold;
+import static io.trino.plugin.hudi.HudiSessionProperties.isParquetVectorizedDecodingEnabled;
 import static io.trino.plugin.hudi.HudiSessionProperties.shouldUseParquetColumnNames;
 import static io.trino.plugin.hudi.HudiUtil.getHudiFileFormat;
 import static io.trino.spi.predicate.Utils.nativeValueToBlock;
@@ -166,7 +167,8 @@ public class HudiPageSourceProvider
                 split,
                 inputFile,
                 dataSourceStats,
-                options.withSmallFileThreshold(getParquetSmallFileThreshold(session)),
+                options.withSmallFileThreshold(getParquetSmallFileThreshold(session))
+                        .withVectorizedDecodingEnabled(isParquetVectorizedDecodingEnabled(session)),
                 timeZone);
 
         return new HudiPageSource(
@@ -197,7 +199,7 @@ public class HudiPageSourceProvider
             AggregatedMemoryContext memoryContext = newSimpleAggregatedMemoryContext();
             dataSource = createDataSource(inputFile, OptionalLong.of(hudiSplit.getFileSize()), options, memoryContext, dataSourceStats);
             ParquetMetadata parquetMetadata = MetadataReader.readFooter(dataSource, Optional.empty());
-            FileMetaData fileMetaData = parquetMetadata.getFileMetaData();
+            FileMetadata fileMetaData = parquetMetadata.getFileMetaData();
             MessageType fileSchema = fileMetaData.getSchema();
 
             Optional<MessageType> message = getParquetMessageType(columns, useColumnNames, fileSchema);
@@ -251,7 +253,7 @@ public class HudiPageSourceProvider
                     dataSource.close();
                 }
             }
-            catch (IOException ignored) {
+            catch (IOException _) {
             }
             if (e instanceof TrinoException) {
                 throw (TrinoException) e;
@@ -296,12 +298,12 @@ public class HudiPageSourceProvider
             List<HivePartitionKey> partitionKeys,
             TypeSignature partitionDataType)
     {
-        HivePartitionKey partitionKey = partitionKeys.stream().filter(key -> key.getName().equalsIgnoreCase(partitionColumnName)).findFirst().orElse(null);
+        HivePartitionKey partitionKey = partitionKeys.stream().filter(key -> key.name().equalsIgnoreCase(partitionColumnName)).findFirst().orElse(null);
         if (isNull(partitionKey)) {
             return Optional.empty();
         }
 
-        String partitionValue = partitionKey.getValue();
+        String partitionValue = partitionKey.value();
         String baseType = partitionDataType.getBase();
         try {
             return switch (baseType) {
@@ -334,8 +336,8 @@ public class HudiPageSourceProvider
         ImmutableList.Builder<String> partitionNames = ImmutableList.builderWithExpectedSize(partitions.size());
         ImmutableList.Builder<String> partitionValues = ImmutableList.builderWithExpectedSize(partitions.size());
         for (HivePartitionKey partition : partitions) {
-            partitionNames.add(partition.getName());
-            partitionValues.add(partition.getValue());
+            partitionNames.add(partition.name());
+            partitionValues.add(partition.value());
         }
         return makePartName(partitionNames.build(), partitionValues.build());
     }

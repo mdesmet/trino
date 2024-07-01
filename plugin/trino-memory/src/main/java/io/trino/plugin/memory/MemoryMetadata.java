@@ -161,21 +161,15 @@ public class MemoryMetadata
     }
 
     @Override
-    public ConnectorTableHandle getTableHandle(ConnectorSession session, SchemaTableName schemaTableName)
-    {
-        throw new UnsupportedOperationException("This method is not supported because getTableHandle with versions is implemented instead");
-    }
-
-    @Override
     public synchronized ConnectorTableHandle getTableHandle(ConnectorSession session, SchemaTableName schemaTableName, Optional<ConnectorTableVersion> startVersion, Optional<ConnectorTableVersion> endVersion)
     {
+        if (startVersion.isPresent() || endVersion.isPresent()) {
+            throw new TrinoException(NOT_SUPPORTED, "This connector does not support versioned tables");
+        }
+
         Long id = tableIds.get(schemaTableName);
         if (id == null) {
             return null;
-        }
-
-        if (startVersion.isPresent() || endVersion.isPresent()) {
-            throw new TrinoException(NOT_SUPPORTED, "This connector does not support versioned tables");
         }
 
         return new MemoryTableHandle(id, OptionalLong.empty(), OptionalDouble.empty());
@@ -370,8 +364,17 @@ public class MemoryMetadata
         requireNonNull(insertHandle, "insertHandle is null");
         MemoryInsertTableHandle memoryInsertHandle = (MemoryInsertTableHandle) insertHandle;
 
-        updateRowsOnHosts(memoryInsertHandle.getTable(), fragments);
+        updateRowsOnHosts(memoryInsertHandle.table(), fragments);
         return Optional.empty();
+    }
+
+    @Override
+    public synchronized void truncateTable(ConnectorSession session, ConnectorTableHandle tableHandle)
+    {
+        MemoryTableHandle handle = (MemoryTableHandle) tableHandle;
+        long tableId = handle.id();
+        TableInfo info = tables.get(handle.id());
+        tables.put(tableId, new TableInfo(tableId, info.schemaName(), info.tableName(), info.columns(), ImmutableMap.of(), info.comment()));
     }
 
     @Override
@@ -483,7 +486,7 @@ public class MemoryMetadata
         Map<HostAddress, MemoryDataFragment> dataFragments = new HashMap<>(info.dataFragments());
         for (Slice fragment : fragments) {
             MemoryDataFragment memoryDataFragment = MemoryDataFragment.fromSlice(fragment);
-            dataFragments.merge(memoryDataFragment.getHostAddress(), memoryDataFragment, MemoryDataFragment::merge);
+            dataFragments.merge(memoryDataFragment.hostAddress(), memoryDataFragment, MemoryDataFragment::merge);
         }
 
         tables.put(tableId, new TableInfo(tableId, info.schemaName(), info.tableName(), info.columns(), dataFragments, info.comment()));
@@ -499,7 +502,7 @@ public class MemoryMetadata
     {
         List<MemoryDataFragment> dataFragments = getDataFragments(((MemoryTableHandle) tableHandle).id());
         long rows = dataFragments.stream()
-                .mapToLong(MemoryDataFragment::getRows)
+                .mapToLong(MemoryDataFragment::rows)
                 .sum();
         return TableStatistics.builder()
                 .setRowCount(Estimate.of(rows))
@@ -587,7 +590,7 @@ public class MemoryMetadata
     @Override
     public synchronized void createLanguageFunction(ConnectorSession session, SchemaFunctionName name, LanguageFunction function, boolean replace)
     {
-        Map<String, LanguageFunction> map = functions.computeIfAbsent(name, ignored -> new HashMap<>());
+        Map<String, LanguageFunction> map = functions.computeIfAbsent(name, _ -> new HashMap<>());
         if (!replace && map.containsKey(function.signatureToken())) {
             throw new TrinoException(ALREADY_EXISTS, "Function already exists");
         }

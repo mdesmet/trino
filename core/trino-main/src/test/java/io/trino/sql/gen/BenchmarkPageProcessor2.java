@@ -30,6 +30,7 @@ import io.trino.spi.connector.RecordSet;
 import io.trino.spi.function.OperatorType;
 import io.trino.spi.type.Type;
 import io.trino.sql.PlannerContext;
+import io.trino.sql.gen.columnar.ColumnarFilterCompiler;
 import io.trino.sql.ir.Call;
 import io.trino.sql.ir.Cast;
 import io.trino.sql.ir.Comparison;
@@ -72,7 +73,6 @@ import static io.trino.type.UnknownType.UNKNOWN;
 import static java.util.Locale.ENGLISH;
 import static java.util.stream.Collectors.toList;
 
-@SuppressWarnings({"PackageVisibleField", "FieldCanBeLocal"})
 @State(Scope.Thread)
 @OutputTimeUnit(TimeUnit.NANOSECONDS)
 @Fork(10)
@@ -123,16 +123,17 @@ public class BenchmarkPageProcessor2
         }
 
         List<RowExpression> projections = getProjections(type);
-        types = projections.stream().map(RowExpression::getType).collect(toList());
+        types = projections.stream().map(RowExpression::type).collect(toList());
 
         FunctionManager functionManager = createTestingFunctionManager();
         PageFunctionCompiler pageFunctionCompiler = new PageFunctionCompiler(functionManager, 0);
+        ColumnarFilterCompiler columnarFilterCompiler = new ColumnarFilterCompiler(functionManager, 0);
 
         inputPage = createPage(types, dictionaryBlocks);
-        pageProcessor = new ExpressionCompiler(functionManager, pageFunctionCompiler).compilePageProcessor(Optional.of(getFilter(type)), projections).get();
+        pageProcessor = new ExpressionCompiler(functionManager, pageFunctionCompiler, columnarFilterCompiler).compilePageProcessor(Optional.of(getFilter(type)), projections).get();
 
         recordSet = new PageRecordSet(types, inputPage);
-        cursorProcessor = new ExpressionCompiler(functionManager, pageFunctionCompiler).compileCursorProcessor(Optional.of(getFilter(type)), projections, "key").get();
+        cursorProcessor = new ExpressionCompiler(functionManager, pageFunctionCompiler, columnarFilterCompiler).compileCursorProcessor(Optional.of(getFilter(type)), projections, "key").get();
     }
 
     @Benchmark

@@ -364,8 +364,8 @@ public class TestEventDrivenTaskSource
         for (TaskDescriptor taskDescriptor : taskDescriptors) {
             int partitionId = taskDescriptor.getPartitionId();
             for (Map.Entry<PlanNodeId, Split> entry : taskDescriptor.getSplits().getSplitsFlat().entries()) {
-                if (entry.getValue().catalogHandle().equals(REMOTE_CATALOG_HANDLE)) {
-                    RemoteSplit remoteSplit = (RemoteSplit) entry.getValue().connectorSplit();
+                if (entry.getValue().getCatalogHandle().equals(REMOTE_CATALOG_HANDLE)) {
+                    RemoteSplit remoteSplit = (RemoteSplit) entry.getValue().getConnectorSplit();
                     SpoolingExchangeInput input = (SpoolingExchangeInput) remoteSplit.getExchangeInput();
                     for (ExchangeSourceHandle handle : input.getExchangeSourceHandles()) {
                         assertThat(handle.getPartitionId()).isEqualTo(partitionId);
@@ -373,7 +373,7 @@ public class TestEventDrivenTaskSource
                     }
                 }
                 else {
-                    TestingConnectorSplit split = (TestingConnectorSplit) entry.getValue().connectorSplit();
+                    TestingConnectorSplit split = (TestingConnectorSplit) entry.getValue().getConnectorSplit();
                     assertThat(split.getBucket().orElseThrow()).isEqualTo(partitionId);
                     actualSplits.computeIfAbsent(partitionId, key -> HashMultimap.create()).put(entry.getKey(), split);
                 }
@@ -389,7 +389,7 @@ public class TestEventDrivenTaskSource
         return new FaultTolerantPartitioningScheme(
                 partitionCount,
                 Optional.of(IntStream.range(0, partitionCount).toArray()),
-                Optional.of(split -> ((TestingConnectorSplit) split.connectorSplit()).getBucket().orElseThrow()),
+                Optional.of(split -> ((TestingConnectorSplit) split.getConnectorSplit()).getBucket().orElseThrow()),
                 Optional.empty());
     }
 
@@ -671,7 +671,7 @@ public class TestEventDrivenTaskSource
             AssignmentResult.Builder result = AssignmentResult.builder();
             Multimaps.asMap(splitsMap).forEach((partition, splits) -> {
                 if (partitions.add(partition)) {
-                    result.addPartition(new Partition(partition, new NodeRequirements(Optional.empty(), ImmutableSet.of())));
+                    result.addPartition(new Partition(partition, new NodeRequirements(Optional.empty(), ImmutableSet.of(), true)));
                     for (PlanNodeId finishedSource : finishedSources) {
                         result.updatePartition(new PartitionUpdate(partition, finishedSource, false, ImmutableListMultimap.of(), true));
                     }
@@ -706,7 +706,7 @@ public class TestEventDrivenTaskSource
             if (partitions.isEmpty()) {
                 partitions.add(0);
                 result
-                        .addPartition(new Partition(0, new NodeRequirements(Optional.empty(), ImmutableSet.of())))
+                        .addPartition(new Partition(0, new NodeRequirements(Optional.empty(), ImmutableSet.of(), true)))
                         .sealPartition(0);
             }
             return result.setNoMorePartitions()

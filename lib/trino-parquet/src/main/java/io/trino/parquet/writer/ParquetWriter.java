@@ -24,6 +24,9 @@ import io.trino.parquet.ParquetCorruptionException;
 import io.trino.parquet.ParquetDataSource;
 import io.trino.parquet.ParquetReaderOptions;
 import io.trino.parquet.ParquetWriteValidation;
+import io.trino.parquet.metadata.BlockMetadata;
+import io.trino.parquet.metadata.FileMetadata;
+import io.trino.parquet.metadata.ParquetMetadata;
 import io.trino.parquet.reader.MetadataReader;
 import io.trino.parquet.reader.ParquetReader;
 import io.trino.parquet.reader.RowGroupInfo;
@@ -31,7 +34,7 @@ import io.trino.parquet.writer.ColumnWriter.BufferData;
 import io.trino.spi.Page;
 import io.trino.spi.type.Type;
 import jakarta.annotation.Nullable;
-import org.apache.parquet.column.ParquetProperties;
+import org.apache.parquet.column.ColumnDescriptor;
 import org.apache.parquet.column.values.bloomfilter.BloomFilter;
 import org.apache.parquet.format.BloomFilterAlgorithm;
 import org.apache.parquet.format.BloomFilterCompression;
@@ -46,8 +49,6 @@ import org.apache.parquet.format.SplitBlockAlgorithm;
 import org.apache.parquet.format.Uncompressed;
 import org.apache.parquet.format.Util;
 import org.apache.parquet.format.XxHash;
-import org.apache.parquet.hadoop.metadata.BlockMetaData;
-import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 import org.apache.parquet.io.MessageColumnIO;
 import org.apache.parquet.schema.MessageType;
 import org.joda.time.DateTimeZone;
@@ -73,8 +74,10 @@ import static io.airlift.slice.Slices.wrappedBuffer;
 import static io.trino.memory.context.AggregatedMemoryContext.newSimpleAggregatedMemoryContext;
 import static io.trino.parquet.ParquetTypeUtils.constructField;
 import static io.trino.parquet.ParquetTypeUtils.getColumnIO;
+import static io.trino.parquet.ParquetTypeUtils.getDescriptors;
 import static io.trino.parquet.ParquetTypeUtils.lookupColumnByName;
 import static io.trino.parquet.ParquetWriteValidation.ParquetWriteValidationBuilder;
+import static io.trino.parquet.metadata.PrunedBlockMetadata.createPrunedColumnsMetadata;
 import static io.trino.parquet.writer.ParquetDataOutput.createDataOutput;
 import static io.trino.spi.type.BigintType.BIGINT;
 import static io.trino.spi.type.DoubleType.DOUBLE;
@@ -87,7 +90,6 @@ import static java.lang.Math.max;
 import static java.lang.Math.min;
 import static java.nio.charset.StandardCharsets.US_ASCII;
 import static java.util.Objects.requireNonNull;
-import static org.apache.parquet.column.ParquetProperties.WriterVersion.PARQUET_1_0;
 
 public class ParquetWriter
         implements Closeable
@@ -260,7 +262,7 @@ public class ParquetWriter
     private ParquetReader createParquetReader(ParquetDataSource input, ParquetMetadata parquetMetadata, ParquetWriteValidation writeValidation)
             throws IOException
     {
-        org.apache.parquet.hadoop.metadata.FileMetaData fileMetaData = parquetMetadata.getFileMetaData();
+        FileMetadata fileMetaData = parquetMetadata.getFileMetaData();
         MessageColumnIO messageColumnIO = getColumnIO(fileMetaData.getSchema(), fileMetaData.getSchema());
         ImmutableList.Builder<Column> columnFields = ImmutableList.builder();
         for (int i = 0; i < writeValidation.getTypes().size(); i++) {
@@ -271,11 +273,12 @@ public class ParquetWriter
                             lookupColumnByName(messageColumnIO, writeValidation.getColumnNames().get(i)))
                             .orElseThrow()));
         }
+        Map<List<String>, ColumnDescriptor> descriptorsByPath = getDescriptors(fileMetaData.getSchema(), fileMetaData.getSchema());
         long nextStart = 0;
         ImmutableList.Builder<RowGroupInfo> rowGroupInfoBuilder = ImmutableList.builder();
-        for (BlockMetaData block : parquetMetadata.getBlocks()) {
-            rowGroupInfoBuilder.add(new RowGroupInfo(block, nextStart, Optional.empty()));
-            nextStart += block.getRowCount();
+        for (BlockMetadata block : parquetMetadata.getBlocks()) {
+            rowGroupInfoBuilder.add(new RowGroupInfo(createPrunedColumnsMetadata(block, input.getId(), descriptorsByPath), nextStart, Optional.empty()));
+            nextStart += block.rowCount();
         }
         return new ParquetReader(
                 Optional.ofNullable(fileMetaData.getCreatedBy()),
@@ -438,15 +441,9 @@ public class ParquetWriter
 
     private void initColumnWriters()
     {
-        ParquetProperties parquetProperties = ParquetProperties.builder()
-                .withWriterVersion(PARQUET_1_0)
-                .withPageSize(writerOption.getMaxPageSize())
-                .build();
-
         this.columnWriters = ParquetWriters.getColumnWriters(
                 messageType,
                 primitiveTypes,
-                parquetProperties,
                 compressionCodec,
                 writerOption,
                 parquetTimeZone);

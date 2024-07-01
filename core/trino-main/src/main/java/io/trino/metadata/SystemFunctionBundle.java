@@ -29,6 +29,7 @@ import io.trino.operator.aggregation.ArbitraryAggregationFunction;
 import io.trino.operator.aggregation.BigintApproximateMostFrequent;
 import io.trino.operator.aggregation.BitwiseAndAggregation;
 import io.trino.operator.aggregation.BitwiseOrAggregation;
+import io.trino.operator.aggregation.BitwiseXorAggregation;
 import io.trino.operator.aggregation.BooleanAndAggregation;
 import io.trino.operator.aggregation.BooleanApproximateCountDistinctAggregation;
 import io.trino.operator.aggregation.BooleanDefaultApproximateCountDistinctAggregation;
@@ -129,9 +130,9 @@ import io.trino.operator.scalar.FailureFunction;
 import io.trino.operator.scalar.FormatNumberFunction;
 import io.trino.operator.scalar.GenericComparisonUnorderedFirstOperator;
 import io.trino.operator.scalar.GenericComparisonUnorderedLastOperator;
-import io.trino.operator.scalar.GenericDistinctFromOperator;
 import io.trino.operator.scalar.GenericEqualOperator;
 import io.trino.operator.scalar.GenericHashCodeOperator;
+import io.trino.operator.scalar.GenericIdenticalOperator;
 import io.trino.operator.scalar.GenericIndeterminateOperator;
 import io.trino.operator.scalar.GenericLessThanOperator;
 import io.trino.operator.scalar.GenericLessThanOrEqualOperator;
@@ -290,6 +291,7 @@ import static io.trino.operator.scalar.ElementToArrayConcatFunction.ELEMENT_TO_A
 import static io.trino.operator.scalar.FormatFunction.FORMAT_FUNCTION;
 import static io.trino.operator.scalar.Greatest.GREATEST;
 import static io.trino.operator.scalar.IdentityCast.IDENTITY_CAST;
+import static io.trino.operator.scalar.JsonStringArrayExtractScalar.JSON_STRING_ARRAY_EXTRACT_SCALAR;
 import static io.trino.operator.scalar.JsonStringToArrayCast.JSON_STRING_TO_ARRAY;
 import static io.trino.operator.scalar.JsonStringToMapCast.JSON_STRING_TO_MAP;
 import static io.trino.operator.scalar.JsonStringToRowCast.JSON_STRING_TO_ROW;
@@ -417,6 +419,7 @@ public final class SystemFunctionBundle
                 .aggregates(RealCorrelationAggregation.class)
                 .aggregates(BitwiseOrAggregation.class)
                 .aggregates(BitwiseAndAggregation.class)
+                .aggregates(BitwiseXorAggregation.class)
                 .scalar(RepeatFunction.class)
                 .scalars(SequenceFunction.class)
                 .scalars(SessionFunctions.class)
@@ -523,7 +526,7 @@ public final class SystemFunctionBundle
                 .function(new MapToMapCast(blockTypeOperators))
                 .function(ARRAY_FLATTEN_FUNCTION)
                 .function(ARRAY_CONCAT_FUNCTION)
-                .functions(ARRAY_SUBSCRIPT, JSON_TO_ARRAY, JSON_STRING_TO_ARRAY)
+                .functions(ARRAY_SUBSCRIPT, JSON_TO_ARRAY, JSON_STRING_TO_ARRAY, JSON_STRING_ARRAY_EXTRACT_SCALAR)
                 .aggregates(ArrayAggregationFunction.class)
                 .aggregates(ListaggAggregationFunction.class)
                 .functions(new MapSubscriptOperator())
@@ -572,7 +575,7 @@ public final class SystemFunctionBundle
                 .function(new GenericEqualOperator(typeOperators))
                 .function(new GenericHashCodeOperator(typeOperators))
                 .function(new GenericXxHash64Operator(typeOperators))
-                .function(new GenericDistinctFromOperator(typeOperators))
+                .function(new GenericIdenticalOperator(typeOperators))
                 .function(new GenericIndeterminateOperator(typeOperators))
                 .function(new GenericComparisonUnorderedLastOperator(typeOperators))
                 .function(new GenericComparisonUnorderedFirstOperator(typeOperators))

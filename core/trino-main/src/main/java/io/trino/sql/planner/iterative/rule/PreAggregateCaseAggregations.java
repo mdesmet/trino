@@ -14,6 +14,7 @@
 package io.trino.sql.planner.iterative.rule;
 
 import com.google.common.collect.ImmutableList;
+import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import io.trino.Session;
 import io.trino.matching.Capture;
@@ -33,7 +34,6 @@ import io.trino.sql.ir.Constant;
 import io.trino.sql.ir.Expression;
 import io.trino.sql.ir.Reference;
 import io.trino.sql.ir.WhenClause;
-import io.trino.sql.planner.IrExpressionInterpreter;
 import io.trino.sql.planner.Symbol;
 import io.trino.sql.planner.SymbolsExtractor;
 import io.trino.sql.planner.iterative.Rule;
@@ -63,7 +63,9 @@ import static io.trino.spi.type.SmallintType.SMALLINT;
 import static io.trino.spi.type.TinyintType.TINYINT;
 import static io.trino.sql.analyzer.TypeSignatureProvider.fromTypes;
 import static io.trino.sql.ir.IrExpressions.ifExpression;
+import static io.trino.sql.ir.IrExpressions.mayFail;
 import static io.trino.sql.ir.IrUtils.or;
+import static io.trino.sql.ir.optimizer.IrExpressionOptimizer.newOptimizer;
 import static io.trino.sql.planner.plan.AggregationNode.Step.SINGLE;
 import static io.trino.sql.planner.plan.AggregationNode.singleGroupingSet;
 import static io.trino.sql.planner.plan.Patterns.aggregation;
@@ -294,11 +296,10 @@ public class PreAggregateCaseAggregations
                             Type aggregationInputType = getOnlyElement(key.getFunction().signature().getArgumentTypes());
                             if (!preProjectionType.equals(aggregationInputType)) {
                                 preProjection = new Cast(preProjection, aggregationInputType);
-                                preProjectionType = aggregationInputType;
                             }
 
                             // Wrap the preProjection with IF to retain the conditional nature on the CASE aggregation(s) during pre-aggregation
-                            if (!(preProjection instanceof Reference || preProjection instanceof Constant)) {
+                            if (mayFail(plannerContext, preProjection)) {
                                 Expression unionConditions = or(caseAggregations.stream()
                                         .map(CaseAggregation::getOperand)
                                         .collect(toImmutableSet()));
@@ -421,7 +422,7 @@ public class PreAggregateCaseAggregations
 
     private Expression optimizeExpression(Expression expression, Context context)
     {
-        return new IrExpressionInterpreter(expression, plannerContext, context.getSession()).optimize();
+        return newOptimizer(plannerContext).process(expression, context.getSession(), ImmutableMap.of()).orElse(expression);
     }
 
     private static class CaseAggregation

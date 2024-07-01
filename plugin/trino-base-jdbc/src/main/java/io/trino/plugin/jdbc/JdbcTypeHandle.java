@@ -13,7 +13,6 @@
  */
 package io.trino.plugin.jdbc;
 
-import com.fasterxml.jackson.annotation.JsonIgnore;
 import io.airlift.slice.SizeOf;
 
 import java.util.Optional;
@@ -51,7 +50,6 @@ public record JdbcTypeHandle(
         return decimalDigits().orElseThrow(() -> new IllegalStateException("decimal digits not present"));
     }
 
-    @JsonIgnore // TODO remove after https://github.com/airlift/airlift/pull/1141
     public long getRetainedSizeInBytes()
     {
         return INSTANCE_SIZE
@@ -60,6 +58,6 @@ public record JdbcTypeHandle(
                 + sizeOf(columnSize, SizeOf::sizeOf)
                 + sizeOf(decimalDigits, SizeOf::sizeOf)
                 + sizeOf(arrayDimensions, SizeOf::sizeOf)
-                + sizeOf(caseSensitivity, ignored -> 0);
+                + sizeOf(caseSensitivity, _ -> 0);
     }
 }

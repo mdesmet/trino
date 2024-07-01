@@ -17,6 +17,7 @@ import alluxio.client.file.cache.PageId;
 import alluxio.client.file.cache.PageStore;
 import alluxio.client.file.cache.store.PageStoreOptions;
 import com.google.common.collect.HashMultiset;
+import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMultiset;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Multiset;
@@ -49,6 +50,8 @@ import java.util.Arrays;
 import java.util.List;
 
 import static com.google.common.base.MoreObjects.firstNonNull;
+import static com.google.common.io.MoreFiles.deleteRecursively;
+import static com.google.common.io.RecursiveDeleteOption.ALLOW_INSECURE;
 import static io.trino.filesystem.alluxio.TestingCacheKeyProvider.testingCacheKeyForLocation;
 import static io.trino.filesystem.tracing.CacheSystemAttributes.CACHE_FILE_LOCATION;
 import static io.trino.filesystem.tracing.CacheSystemAttributes.CACHE_FILE_READ_POSITION;
@@ -81,10 +84,10 @@ public class TestAlluxioCacheFileSystemAccessOperations
         Path cacheDirectory = Files.createDirectory(tempDirectory.resolve("cache"));
 
         AlluxioFileSystemCacheConfig configuration = new AlluxioFileSystemCacheConfig()
-                .setCacheDirectories(cacheDirectory.toAbsolutePath().toString())
+                .setCacheDirectories(ImmutableList.of(cacheDirectory.toAbsolutePath().toString()))
                 .disableTTL()
                 .setCachePageSize(DataSize.ofBytes(PAGE_SIZE))
-                .setMaxCacheSizes(DataSize.ofBytes(CACHE_SIZE).toBytesValueString());
+                .setMaxCacheSizes(ImmutableList.of(DataSize.ofBytes(CACHE_SIZE)));
 
         tracingFileSystemFactory = new TracingFileSystemFactory(testingTelemetry.getTracer(), new MemoryFileSystemFactory());
         alluxioCache = new AlluxioFileSystemCache(testingTelemetry.getTracer(), configuration, new AlluxioCacheStats());
@@ -94,10 +97,11 @@ public class TestAlluxioCacheFileSystemAccessOperations
 
     @AfterAll
     public void tearDown()
+            throws Exception
     {
         tracingFileSystemFactory = null;
         fileSystem = null;
-        tempDirectory.toFile().delete();
+        deleteRecursively(tempDirectory, ALLOW_INSECURE);
         tempDirectory = null;
     }
 

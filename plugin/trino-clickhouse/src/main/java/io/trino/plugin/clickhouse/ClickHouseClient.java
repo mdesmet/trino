@@ -35,18 +35,24 @@ import io.trino.plugin.jdbc.ColumnMapping;
 import io.trino.plugin.jdbc.ConnectionFactory;
 import io.trino.plugin.jdbc.JdbcColumnHandle;
 import io.trino.plugin.jdbc.JdbcExpression;
+import io.trino.plugin.jdbc.JdbcSortItem;
 import io.trino.plugin.jdbc.JdbcTableHandle;
 import io.trino.plugin.jdbc.JdbcTypeHandle;
 import io.trino.plugin.jdbc.LongReadFunction;
 import io.trino.plugin.jdbc.LongWriteFunction;
 import io.trino.plugin.jdbc.ObjectWriteFunction;
+import io.trino.plugin.jdbc.PredicatePushdownController;
 import io.trino.plugin.jdbc.QueryBuilder;
 import io.trino.plugin.jdbc.RemoteTableName;
 import io.trino.plugin.jdbc.SliceWriteFunction;
 import io.trino.plugin.jdbc.WriteMapping;
 import io.trino.plugin.jdbc.aggregation.ImplementAvgFloatingPoint;
+import io.trino.plugin.jdbc.aggregation.ImplementCorr;
 import io.trino.plugin.jdbc.aggregation.ImplementCount;
 import io.trino.plugin.jdbc.aggregation.ImplementCountAll;
+import io.trino.plugin.jdbc.aggregation.ImplementCountDistinct;
+import io.trino.plugin.jdbc.aggregation.ImplementCovariancePop;
+import io.trino.plugin.jdbc.aggregation.ImplementCovarianceSamp;
 import io.trino.plugin.jdbc.aggregation.ImplementMinMax;
 import io.trino.plugin.jdbc.aggregation.ImplementSum;
 import io.trino.plugin.jdbc.expression.JdbcConnectorExpressionRewriterBuilder;
@@ -58,6 +64,7 @@ import io.trino.spi.connector.ColumnHandle;
 import io.trino.spi.connector.ColumnMetadata;
 import io.trino.spi.connector.ConnectorSession;
 import io.trino.spi.connector.ConnectorTableMetadata;
+import io.trino.spi.predicate.Domain;
 import io.trino.spi.type.CharType;
 import io.trino.spi.type.DecimalType;
 import io.trino.spi.type.Decimals;
@@ -121,7 +128,9 @@ import static io.trino.plugin.jdbc.DecimalSessionSessionProperties.getDecimalDef
 import static io.trino.plugin.jdbc.DecimalSessionSessionProperties.getDecimalRounding;
 import static io.trino.plugin.jdbc.DecimalSessionSessionProperties.getDecimalRoundingMode;
 import static io.trino.plugin.jdbc.JdbcErrorCode.JDBC_ERROR;
+import static io.trino.plugin.jdbc.JdbcMetadataSessionProperties.getDomainCompactionThreshold;
 import static io.trino.plugin.jdbc.PredicatePushdownController.DISABLE_PUSHDOWN;
+import static io.trino.plugin.jdbc.PredicatePushdownController.FULL_PUSHDOWN;
 import static io.trino.plugin.jdbc.StandardColumnMappings.bigintColumnMapping;
 import static io.trino.plugin.jdbc.StandardColumnMappings.bigintWriteFunction;
 import static io.trino.plugin.jdbc.StandardColumnMappings.booleanWriteFunction;
@@ -137,7 +146,7 @@ import static io.trino.plugin.jdbc.StandardColumnMappings.realWriteFunction;
 import static io.trino.plugin.jdbc.StandardColumnMappings.shortDecimalWriteFunction;
 import static io.trino.plugin.jdbc.StandardColumnMappings.smallintColumnMapping;
 import static io.trino.plugin.jdbc.StandardColumnMappings.smallintWriteFunction;
-import static io.trino.plugin.jdbc.StandardColumnMappings.timestampColumnMappingUsingSqlTimestampWithRounding;
+import static io.trino.plugin.jdbc.StandardColumnMappings.timestampColumnMapping;
 import static io.trino.plugin.jdbc.StandardColumnMappings.timestampReadFunction;
 import static io.trino.plugin.jdbc.StandardColumnMappings.tinyintColumnMapping;
 import static io.trino.plugin.jdbc.StandardColumnMappings.tinyintWriteFunction;
@@ -184,6 +193,7 @@ import static java.math.RoundingMode.UNNECESSARY;
 import static java.time.ZoneOffset.UTC;
 import static java.util.Locale.ENGLISH;
 import static java.util.Objects.requireNonNull;
+import static java.util.stream.Collectors.joining;
 
 public class ClickHouseClient
         extends BaseJdbcClient
@@ -196,6 +206,20 @@ public class ClickHouseClient
     private static final String NO_COMMENT = "";
 
     public static final int DEFAULT_DOMAIN_COMPACTION_THRESHOLD = 1_000;
+
+    private static final PredicatePushdownController CLICKHOUSE_PUSHDOWN_CONTROLLER = (session, domain) -> {
+        if (domain.isOnlyNull()) {
+            return FULL_PUSHDOWN.apply(session, domain);
+        }
+
+        Domain simplifiedDomain = domain.simplify(getDomainCompactionThreshold(session));
+        if (!simplifiedDomain.getValues().isDiscreteSet()) {
+            // Domain#simplify can turn a discrete set into a range predicate
+            return DISABLE_PUSHDOWN.apply(session, domain);
+        }
+
+        return FULL_PUSHDOWN.apply(session, simplifiedDomain);
+    };
 
     private final ConnectorExpressionRewriter<ParameterizedExpression> connectorExpressionRewriter;
     private final AggregateFunctionRewriter<JdbcExpression, ?> aggregateFunctionRewriter;
@@ -224,10 +248,14 @@ public class ClickHouseClient
                 ImmutableSet.<AggregateFunctionRule<JdbcExpression, ParameterizedExpression>>builder()
                         .add(new ImplementCountAll(bigintTypeHandle))
                         .add(new ImplementCount(bigintTypeHandle))
+                        .add(new ImplementCountDistinct(bigintTypeHandle, false))
                         .add(new ImplementMinMax(false)) // TODO: Revisit once https://github.com/trinodb/trino/issues/7100 is resolved
                         .add(new ImplementSum(ClickHouseClient::toTypeHandle))
                         .add(new ImplementAvgFloatingPoint())
                         .add(new ImplementAvgBigint())
+                        .add(new ImplementCorr())
+                        .add(new ImplementCovarianceSamp())
+                        .add(new ImplementCovariancePop())
                         .build());
     }
 
@@ -243,6 +271,40 @@ public class ClickHouseClient
     {
         // TODO: Remove override once https://github.com/trinodb/trino/issues/7100 is resolved. Currently pushdown for textual types is not tested and may lead to incorrect results.
         return preventTextualTypeAggregationPushdown(groupingSets);
+    }
+
+    @Override
+    public boolean supportsTopN(ConnectorSession session, JdbcTableHandle handle, List<JdbcSortItem> sortOrder)
+    {
+        for (JdbcSortItem sortItem : sortOrder) {
+            Type sortItemType = sortItem.column().getColumnType();
+            checkArgument(!(sortItemType instanceof CharType), "Unexpected char type: %s", sortItem.column().getColumnName());
+            if (sortItemType instanceof VarcharType) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    @Override
+    protected Optional<TopNFunction> topNFunction()
+    {
+        return Optional.of((query, sortItems, limit) -> {
+            String orderBy = sortItems.stream()
+                    .map(sortItem -> {
+                        String ordering = sortItem.sortOrder().isAscending() ? "ASC" : "DESC";
+                        String nullsHandling = sortItem.sortOrder().isNullsFirst() ? "NULLS FIRST" : "NULLS LAST";
+                        return format("%s %s %s", quoted(sortItem.column().getColumnName()), ordering, nullsHandling);
+                    })
+                    .collect(joining(", "));
+            return format("%s ORDER BY %s LIMIT %d", query, orderBy, limit);
+        });
+    }
+
+    @Override
+    public boolean isTopNGuaranteed(ConnectorSession session)
+    {
+        return true;
     }
 
     @Override
@@ -612,9 +674,8 @@ public class ClickHouseClient
                             createUnboundedVarcharType(),
                             varcharReadFunction(createUnboundedVarcharType()),
                             varcharWriteFunction(),
-                            DISABLE_PUSHDOWN));
+                            CLICKHOUSE_PUSHDOWN_CONTROLLER));
                 }
-                // TODO (https://github.com/trinodb/trino/issues/7100) test & enable predicate pushdown
                 return Optional.of(varbinaryColumnMapping());
             case UUID:
                 return Optional.of(uuidColumnMapping());
@@ -678,7 +739,7 @@ public class ClickHouseClient
                             timestampSecondsWriteFunction(getClickHouseServerVersion(session))));
                 }
                 // TODO (https://github.com/trinodb/trino/issues/10537) Add support for Datetime64 type
-                return Optional.of(timestampColumnMappingUsingSqlTimestampWithRounding(TIMESTAMP_MILLIS));
+                return Optional.of(timestampColumnMapping(TIMESTAMP_MILLIS));
 
             case Types.TIMESTAMP_WITH_TIMEZONE:
                 if (columnDataType == ClickHouseDataType.DateTime) {

@@ -44,6 +44,7 @@ import io.trino.metadata.TableLayout;
 import io.trino.metadata.TableMetadata;
 import io.trino.operator.RetryPolicy;
 import io.trino.spi.ErrorCodeSupplier;
+import io.trino.spi.RefreshType;
 import io.trino.spi.TrinoException;
 import io.trino.spi.connector.CatalogHandle;
 import io.trino.spi.connector.ColumnHandle;
@@ -87,6 +88,7 @@ import io.trino.sql.planner.plan.TableExecuteNode;
 import io.trino.sql.planner.plan.TableFinishNode;
 import io.trino.sql.planner.plan.TableScanNode;
 import io.trino.sql.planner.plan.TableWriterNode;
+import io.trino.sql.planner.plan.TableWriterNode.RefreshMaterializedViewReference;
 import io.trino.sql.planner.plan.ValuesNode;
 import io.trino.sql.planner.planprinter.PlanPrinter;
 import io.trino.sql.planner.sanity.PlanSanityChecker;
@@ -239,7 +241,7 @@ public class LogicalPlanner
     public Plan plan(Analysis analysis, Stage stage, boolean collectPlanStatistics)
     {
         PlanNode root;
-        try (var ignored = scopedSpan(plannerContext.getTracer(), "plan")) {
+        try (var _ = scopedSpan(plannerContext.getTracer(), "plan")) {
             root = planStatement(analysis, analysis.getStatement());
         }
 
@@ -254,12 +256,12 @@ public class LogicalPlanner
                     false));
         }
 
-        try (var ignored = scopedSpan(plannerContext.getTracer(), "validate-intermediate")) {
+        try (var _ = scopedSpan(plannerContext.getTracer(), "validate-intermediate")) {
             planSanityChecker.validateIntermediatePlan(root, session, plannerContext, warningCollector);
         }
 
         if (stage.ordinal() >= OPTIMIZED.ordinal()) {
-            try (var ignored = scopedSpan(plannerContext.getTracer(), "optimizer")) {
+            try (var _ = scopedSpan(plannerContext.getTracer(), "optimizer")) {
                 for (PlanOptimizer optimizer : planOptimizers) {
                     root = runOptimizer(root, tableStatsProvider, optimizer);
                 }
@@ -268,7 +270,7 @@ public class LogicalPlanner
 
         if (stage.ordinal() >= OPTIMIZED_AND_VALIDATED.ordinal()) {
             // make sure we produce a valid plan after optimizations run. This is mainly to catch programming errors
-            try (var ignored = scopedSpan(plannerContext.getTracer(), "validate-final")) {
+            try (var _ = scopedSpan(plannerContext.getTracer(), "validate-final")) {
                 planSanityChecker.validateFinalPlan(root, session, plannerContext, warningCollector);
             }
         }
@@ -287,7 +289,7 @@ public class LogicalPlanner
         StatsAndCosts statsAndCosts;
         StatsProvider statsProvider = new CachingStatsProvider(statsCalculator, session, collectTableStatsProvider);
         CostProvider costProvider = new CachingCostProvider(costCalculator, statsProvider, Optional.empty(), session);
-        try (var ignored = scopedSpan(plannerContext.getTracer(), "plan-stats")) {
+        try (var _ = scopedSpan(plannerContext.getTracer(), "plan-stats")) {
             statsAndCosts = StatsAndCosts.create(root, statsProvider, costProvider);
         }
         return new Plan(root, statsAndCosts);
@@ -297,7 +299,7 @@ public class LogicalPlanner
     private PlanNode runOptimizer(PlanNode root, TableStatsProvider tableStatsProvider, PlanOptimizer optimizer)
     {
         PlanNode result;
-        try (var ignored = optimizerSpan(optimizer)) {
+        try (var _ = optimizerSpan(optimizer)) {
             result = optimizer.optimize(root, new PlanOptimizer.Context(session, symbolAllocator, idAllocator, warningCollector, planOptimizersStatsCollector, tableStatsProvider, RuntimeInfoProvider.noImplementation()));
         }
         if (result == null) {
@@ -507,7 +509,7 @@ public class LogicalPlanner
             TableHandle tableHandle,
             List<ColumnHandle> insertColumns,
             Optional<TableLayout> newTableLayout,
-            Optional<WriterTarget> materializedViewRefreshWriterTarget)
+            Optional<RefreshMaterializedViewReference> materializedViewRefreshWriterTarget)
     {
         TableMetadata tableMetadata = metadata.getTableMetadata(session, tableHandle);
 
@@ -591,11 +593,13 @@ public class LogicalPlanner
         TableStatisticsMetadata statisticsMetadata = metadata.getStatisticsCollectionMetadataForWrite(session, tableHandle.catalogHandle(), tableMetadata.metadata());
 
         if (materializedViewRefreshWriterTarget.isPresent()) {
+            RefreshType refreshType = IncrementalRefreshVisitor.canIncrementallyRefresh(plan.getRoot());
+            WriterTarget writerTarget = materializedViewRefreshWriterTarget.get().withRefreshType(refreshType);
             return createTableWriterPlan(
                     analysis,
                     plan.getRoot(),
                     plan.getFieldMappings(),
-                    materializedViewRefreshWriterTarget.get(),
+                    writerTarget,
                     insertedTableColumnNames,
                     newTableLayout,
                     statisticsMetadata);
@@ -672,11 +676,13 @@ public class LogicalPlanner
         List<String> tableFunctions = analysis.getPolymorphicTableFunctions().stream()
                 .map(polymorphicTableFunction -> polymorphicTableFunction.getNode().getName().toString())
                 .collect(toImmutableList());
-        TableWriterNode.RefreshMaterializedViewReference writerTarget = new TableWriterNode.RefreshMaterializedViewReference(
+        RefreshMaterializedViewReference writerTarget = new RefreshMaterializedViewReference(
                 viewAnalysis.getTable().toString(),
                 tableHandle,
                 ImmutableList.copyOf(analysis.getTables()),
-                tableFunctions);
+                tableFunctions,
+                // this is a placeholder value - refresh type will be determined by getInsertPlan based on the plan tree
+                RefreshType.FULL);
         return getInsertPlan(analysis, viewAnalysis.getTable(), query, tableHandle, viewAnalysis.getColumns(), newTableLayout, Optional.of(writerTarget));
     }
 

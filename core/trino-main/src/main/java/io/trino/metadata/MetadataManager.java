@@ -30,6 +30,7 @@ import io.trino.connector.system.GlobalSystemConnector;
 import io.trino.metadata.LanguageFunctionManager.RunAsIdentityLoader;
 import io.trino.spi.ErrorCode;
 import io.trino.spi.QueryId;
+import io.trino.spi.RefreshType;
 import io.trino.spi.TrinoException;
 import io.trino.spi.block.BlockEncodingSerde;
 import io.trino.spi.connector.AggregateFunction;
@@ -275,7 +276,10 @@ public final class MetadataManager
         }
 
         return getOptionalCatalogMetadata(session, table.catalogName()).flatMap(catalogMetadata -> {
-            CatalogHandle catalogHandle = catalogMetadata.getCatalogHandle(session, table);
+            Optional<ConnectorTableVersion> startTableVersion = toConnectorVersion(startVersion);
+            Optional<ConnectorTableVersion> endTableVersion = toConnectorVersion(endVersion);
+
+            CatalogHandle catalogHandle = catalogMetadata.getCatalogHandle(session, table, startTableVersion, endTableVersion);
             ConnectorMetadata metadata = catalogMetadata.getMetadataFor(session, catalogHandle);
 
             ConnectorSession connectorSession = session.toConnectorSession(catalogHandle);
@@ -283,8 +287,8 @@ public final class MetadataManager
             ConnectorTableHandle tableHandle = metadata.getTableHandle(
                     connectorSession,
                     table.asSchemaTableName(),
-                    toConnectorVersion(startVersion),
-                    toConnectorVersion(endVersion));
+                    startTableVersion,
+                    endTableVersion);
             return Optional.ofNullable(tableHandle)
                     .map(connectorTableHandle -> new TableHandle(
                             catalogHandle,
@@ -510,11 +514,18 @@ public final class MetadataManager
 
         Optional<QualifiedObjectName> objectName = prefix.asQualifiedObjectName();
         if (objectName.isPresent()) {
-            Optional<RelationType> relationType = getRelationTypeIfExists(session, objectName.get());
-            if (relationType.isPresent()) {
-                return ImmutableList.of(objectName.get());
+            try {
+                Optional<RelationType> relationType = getRelationTypeIfExists(session, objectName.get());
+                if (relationType.isPresent()) {
+                    return ImmutableList.of(objectName.get());
+                }
+                // TODO we can probably return empty list here
             }
-            // TODO we can probably return empty lit here
+            catch (RuntimeException e) {
+                handleListingError(e, prefix);
+                // TODO This could be potentially improved to not return empty results https://github.com/trinodb/trino/issues/6551
+                return ImmutableList.of();
+            }
         }
 
         Optional<CatalogMetadata> catalog = getOptionalCatalogMetadata(session, prefix.getCatalogName());
@@ -614,13 +625,13 @@ public final class MetadataManager
             QualifiedObjectName objectName = new QualifiedObjectName(catalogName, schemaName.orElseThrow(), relationName.get());
             SchemaTableName schemaTableName = objectName.asSchemaTableName();
 
-            return Optional.<RelationColumnsMetadata>empty()
-                    .or(() -> getMaterializedViewInternal(session, objectName)
-                            .map(materializedView -> RelationColumnsMetadata.forMaterializedView(schemaTableName, materializedView.getColumns())))
-                    .or(() -> getViewInternal(session, objectName)
-                            .map(view -> RelationColumnsMetadata.forView(schemaTableName, view.getColumns())))
-                    .or(() -> {
-                        try {
+            try {
+                return Optional.<RelationColumnsMetadata>empty()
+                        .or(() -> getMaterializedViewInternal(session, objectName)
+                                .map(materializedView -> RelationColumnsMetadata.forMaterializedView(schemaTableName, materializedView.getColumns())))
+                        .or(() -> getViewInternal(session, objectName)
+                                .map(view -> RelationColumnsMetadata.forView(schemaTableName, view.getColumns())))
+                        .or(() -> {
                             // TODO: redirects are handled inefficiently: we currently throw-away redirect info and redo it later
                             RedirectionAwareTableHandle redirectionAware = getRedirectionAwareTableHandle(session, objectName);
                             if (redirectionAware.redirectedTableName().isPresent()) {
@@ -629,31 +640,18 @@ public final class MetadataManager
                             if (redirectionAware.tableHandle().isPresent()) {
                                 return Optional.of(RelationColumnsMetadata.forTable(schemaTableName, getTableMetadata(session, redirectionAware.tableHandle().get()).columns()));
                             }
-                        }
-                        catch (RuntimeException e) {
-                            boolean silent = false;
-                            if (e instanceof TrinoException trinoException) {
-                                ErrorCode errorCode = trinoException.getErrorCode();
-                                silent = errorCode.equals(UNSUPPORTED_TABLE_TYPE.toErrorCode()) ||
-                                        // e.g. table deleted concurrently
-                                        errorCode.equals(TABLE_NOT_FOUND.toErrorCode()) ||
-                                        errorCode.equals(NOT_FOUND.toErrorCode()) ||
-                                        // e.g. Iceberg/Delta table being deleted concurrently resulting in failure to load metadata from filesystem
-                                        errorCode.getType() == EXTERNAL;
-                            }
-                            if (silent) {
-                                log.debug(e, "Failed to get metadata for table: %s", objectName);
-                            }
-                            else {
-                                log.warn(e, "Failed to get metadata for table: %s", objectName);
-                            }
-                        }
-                        // Not found, or getting metadata failed.
-                        return Optional.empty();
-                    })
-                    .filter(relationColumnsMetadata -> relationFilter.apply(ImmutableSet.of(relationColumnsMetadata.name())).contains(relationColumnsMetadata.name()))
-                    .map(relationColumnsMetadata -> ImmutableList.of(tableColumnsMetadata(catalogName, relationColumnsMetadata)))
-                    .orElse(ImmutableList.of());
+                            // Not found
+                            return Optional.empty();
+                        })
+                        .filter(relationColumnsMetadata -> relationFilter.apply(ImmutableSet.of(relationColumnsMetadata.name())).contains(relationColumnsMetadata.name()))
+                        .map(relationColumnsMetadata -> ImmutableList.of(tableColumnsMetadata(catalogName, relationColumnsMetadata)))
+                        .orElse(ImmutableList.of());
+            }
+            catch (RuntimeException e) {
+                handleListingError(e, prefix);
+                // Empty in case of metadata error.
+                return ImmutableList.of();
+            }
         }
 
         Optional<CatalogMetadata> catalog = getOptionalCatalogMetadata(session, catalogName);
@@ -676,6 +674,26 @@ public final class MetadataManager
             }
         }
         return ImmutableList.copyOf(tableColumns.values());
+    }
+
+    private static void handleListingError(RuntimeException e, QualifiedTablePrefix tablePrefix)
+    {
+        boolean silent = false;
+        if (e instanceof TrinoException trinoException) {
+            ErrorCode errorCode = trinoException.getErrorCode();
+            silent = errorCode.equals(UNSUPPORTED_TABLE_TYPE.toErrorCode()) ||
+                    // e.g. table deleted concurrently
+                    errorCode.equals(TABLE_NOT_FOUND.toErrorCode()) ||
+                    errorCode.equals(NOT_FOUND.toErrorCode()) ||
+                    // e.g. Iceberg/Delta table being deleted concurrently resulting in failure to load metadata from filesystem
+                    errorCode.getType() == EXTERNAL;
+        }
+        if (silent) {
+            log.debug(e, "Failed to get metadata for table: %s", tablePrefix);
+        }
+        else {
+            log.warn(e, "Failed to get metadata for table: %s", tablePrefix);
+        }
     }
 
     private TableColumnsMetadata tableColumnsMetadata(String catalogName, RelationColumnsMetadata relationColumnsMetadata)
@@ -1193,7 +1211,7 @@ public final class MetadataManager
     }
 
     @Override
-    public InsertTableHandle beginRefreshMaterializedView(Session session, TableHandle tableHandle, List<TableHandle> sourceTableHandles)
+    public InsertTableHandle beginRefreshMaterializedView(Session session, TableHandle tableHandle, List<TableHandle> sourceTableHandles, RefreshType refreshType)
     {
         CatalogHandle catalogHandle = tableHandle.catalogHandle();
         CatalogMetadata catalogMetadata = getCatalogMetadataForWrite(session, catalogHandle);
@@ -1203,9 +1221,8 @@ public final class MetadataManager
         List<ConnectorTableHandle> sourceConnectorHandles = sourceTableHandles.stream()
                 .map(TableHandle::connectorHandle)
                 .collect(Collectors.toList());
-        sourceConnectorHandles.add(tableHandle.connectorHandle());
 
-        ConnectorInsertTableHandle handle = metadata.beginRefreshMaterializedView(session.toConnectorSession(catalogHandle), tableHandle.connectorHandle(), sourceConnectorHandles, getRetryPolicy(session).getRetryMode());
+        ConnectorInsertTableHandle handle = metadata.beginRefreshMaterializedView(session.toConnectorSession(catalogHandle), tableHandle.connectorHandle(), sourceConnectorHandles, getRetryPolicy(session).getRetryMode(), refreshType);
 
         return new InsertTableHandle(tableHandle.catalogHandle(), transactionHandle, handle);
     }
@@ -1316,11 +1333,15 @@ public final class MetadataManager
     }
 
     @Override
-    public void finishMerge(Session session, MergeHandle mergeHandle, Collection<Slice> fragments, Collection<ComputedStatistics> computedStatistics)
+    public void finishMerge(Session session, MergeHandle mergeHandle, List<TableHandle> sourceTableHandles, Collection<Slice> fragments, Collection<ComputedStatistics> computedStatistics)
     {
         CatalogHandle catalogHandle = mergeHandle.tableHandle().catalogHandle();
         ConnectorMetadata metadata = getMetadata(session, catalogHandle);
-        metadata.finishMerge(session.toConnectorSession(catalogHandle), mergeHandle.connectorMergeHandle(), fragments, computedStatistics);
+        List<ConnectorTableHandle> sourceConnectorHandles = sourceTableHandles.stream()
+                .filter(handle -> handle.catalogHandle().equals(catalogHandle))
+                .map(TableHandle::connectorHandle)
+                .collect(toImmutableList());
+        metadata.finishMerge(session.toConnectorSession(catalogHandle), mergeHandle.connectorMergeHandle(), sourceConnectorHandles, fragments, computedStatistics);
     }
 
     @Override
@@ -1396,9 +1417,16 @@ public final class MetadataManager
 
                 Map<SchemaTableName, ConnectorViewDefinition> viewMap;
                 if (tablePrefix.getTable().isPresent()) {
-                    viewMap = metadata.getView(connectorSession, tablePrefix.toSchemaTableName())
-                            .map(view -> ImmutableMap.of(tablePrefix.toSchemaTableName(), view))
-                            .orElse(ImmutableMap.of());
+                    try {
+                        viewMap = metadata.getView(connectorSession, tablePrefix.toSchemaTableName())
+                                .map(view -> ImmutableMap.of(tablePrefix.toSchemaTableName(), view))
+                                .orElse(ImmutableMap.of());
+                    }
+                    catch (RuntimeException e) {
+                        handleListingError(e, prefix);
+                        // Empty in case of metadata error.
+                        viewMap = ImmutableMap.of();
+                    }
                 }
                 else {
                     viewMap = metadata.getViews(connectorSession, tablePrefix.getSchema());
@@ -1452,7 +1480,18 @@ public final class MetadataManager
     @Override
     public boolean isView(Session session, QualifiedObjectName viewName)
     {
-        return getViewInternal(session, viewName).isPresent();
+        if (cannotExist(viewName)) {
+            return false;
+        }
+
+        return getOptionalCatalogMetadata(session, viewName.catalogName())
+                .map(catalog -> {
+                    CatalogHandle catalogHandle = catalog.getCatalogHandle(session, viewName, Optional.empty(), Optional.empty());
+                    ConnectorMetadata metadata = catalog.getMetadataFor(session, catalogHandle);
+                    ConnectorSession connectorSession = session.toConnectorSession(catalogHandle);
+                    return metadata.isView(connectorSession, viewName.asSchemaTableName());
+                })
+                .orElse(false);
     }
 
     @Override
@@ -1475,7 +1514,7 @@ public final class MetadataManager
         Optional<CatalogMetadata> catalog = getOptionalCatalogMetadata(session, viewName.catalogName());
         if (catalog.isPresent()) {
             CatalogMetadata catalogMetadata = catalog.get();
-            CatalogHandle catalogHandle = catalogMetadata.getCatalogHandle(session, viewName);
+            CatalogHandle catalogHandle = catalogMetadata.getCatalogHandle(session, viewName, Optional.empty(), Optional.empty());
             ConnectorMetadata metadata = catalogMetadata.getMetadataFor(session, catalogHandle);
 
             ConnectorSession connectorSession = session.toConnectorSession(catalogHandle);
@@ -1516,7 +1555,7 @@ public final class MetadataManager
         Optional<CatalogMetadata> catalog = getOptionalCatalogMetadata(session, viewName.catalogName());
         if (catalog.isPresent()) {
             CatalogMetadata catalogMetadata = catalog.get();
-            CatalogHandle catalogHandle = catalogMetadata.getCatalogHandle(session, viewName);
+            CatalogHandle catalogHandle = catalogMetadata.getCatalogHandle(session, viewName, Optional.empty(), Optional.empty());
             ConnectorMetadata metadata = catalogMetadata.getMetadataFor(session, catalogHandle);
 
             ConnectorSession connectorSession = session.toConnectorSession(catalogHandle);
@@ -1745,7 +1784,7 @@ public final class MetadataManager
         Optional<CatalogMetadata> catalog = getOptionalCatalogMetadata(session, viewName.catalogName());
         if (catalog.isPresent()) {
             CatalogMetadata catalogMetadata = catalog.get();
-            CatalogHandle catalogHandle = catalogMetadata.getCatalogHandle(session, viewName);
+            CatalogHandle catalogHandle = catalogMetadata.getCatalogHandle(session, viewName, Optional.empty(), Optional.empty());
             ConnectorMetadata metadata = catalogMetadata.getMetadataFor(session, catalogHandle);
 
             ConnectorSession connectorSession = session.toConnectorSession(catalogHandle);
@@ -1760,7 +1799,7 @@ public final class MetadataManager
         Optional<CatalogMetadata> catalog = getOptionalCatalogMetadata(session, viewName.catalogName());
         if (catalog.isPresent()) {
             CatalogMetadata catalogMetadata = catalog.get();
-            CatalogHandle catalogHandle = catalogMetadata.getCatalogHandle(session, viewName);
+            CatalogHandle catalogHandle = catalogMetadata.getCatalogHandle(session, viewName, Optional.empty(), Optional.empty());
             ConnectorMetadata metadata = catalogMetadata.getMetadataFor(session, catalogHandle);
 
             ConnectorSession connectorSession = session.toConnectorSession(catalogHandle);
@@ -1778,7 +1817,7 @@ public final class MetadataManager
         Optional<CatalogMetadata> catalog = getOptionalCatalogMetadata(session, viewName.catalogName());
         if (catalog.isPresent()) {
             CatalogMetadata catalogMetadata = catalog.get();
-            CatalogHandle catalogHandle = catalogMetadata.getCatalogHandle(session, viewName);
+            CatalogHandle catalogHandle = catalogMetadata.getCatalogHandle(session, viewName, Optional.empty(), Optional.empty());
             ConnectorMetadata metadata = catalogMetadata.getMetadataFor(session, catalogHandle);
 
             ConnectorSession connectorSession = session.toConnectorSession(catalogHandle);
@@ -1842,7 +1881,7 @@ public final class MetadataManager
         return metadata.applyTableScanRedirect(connectorSession, tableHandle.connectorHandle());
     }
 
-    private QualifiedObjectName getRedirectedTableName(Session session, QualifiedObjectName originalTableName)
+    private QualifiedObjectName getRedirectedTableName(Session session, QualifiedObjectName originalTableName, Optional<TableVersion> startVersion, Optional<TableVersion> endVersion)
     {
         requireNonNull(session, "session is null");
         requireNonNull(originalTableName, "originalTableName is null");
@@ -1863,7 +1902,7 @@ public final class MetadataManager
             }
 
             CatalogMetadata catalogMetadata = catalog.get();
-            CatalogHandle catalogHandle = catalogMetadata.getCatalogHandle(session, tableName);
+            CatalogHandle catalogHandle = catalogMetadata.getCatalogHandle(session, tableName, toConnectorVersion(startVersion), toConnectorVersion(endVersion));
             ConnectorMetadata metadata = catalogMetadata.getMetadataFor(session, catalogHandle);
 
             Optional<QualifiedObjectName> redirectedTableName = metadata.redirectTable(session.toConnectorSession(catalogHandle), tableName.asSchemaTableName())
@@ -1896,7 +1935,7 @@ public final class MetadataManager
     @Override
     public RedirectionAwareTableHandle getRedirectionAwareTableHandle(Session session, QualifiedObjectName tableName, Optional<TableVersion> startVersion, Optional<TableVersion> endVersion)
     {
-        QualifiedObjectName targetTableName = getRedirectedTableName(session, tableName);
+        QualifiedObjectName targetTableName = getRedirectedTableName(session, tableName, startVersion, endVersion);
         if (targetTableName.equals(tableName)) {
             return noRedirection(getTableHandle(session, tableName, startVersion, endVersion));
         }
@@ -2405,7 +2444,7 @@ public final class MetadataManager
             ConnectorSession connectorSession = session.toConnectorSession(catalogMetadata.getCatalogHandle());
 
             List<CatalogHandle> catalogHandles = prefix.asQualifiedObjectName()
-                    .map(qualifiedTableName -> singletonList(catalogMetadata.getCatalogHandle(session, qualifiedTableName)))
+                    .map(qualifiedTableName -> singletonList(catalogMetadata.getCatalogHandle(session, qualifiedTableName, Optional.empty(), Optional.empty())))
                     .orElseGet(catalogMetadata::listCatalogHandles);
             for (CatalogHandle catalogHandle : catalogHandles) {
                 ConnectorMetadata metadata = catalogMetadata.getMetadataFor(session, catalogHandle);
@@ -2591,6 +2630,16 @@ public final class MetadataManager
     }
 
     @Override
+    public Collection<LanguageFunction> getLanguageFunctions(Session session, QualifiedObjectName name)
+    {
+        CatalogMetadata catalogMetadata = getRequiredCatalogMetadata(session, name.catalogName());
+        CatalogHandle catalogHandle = catalogMetadata.getCatalogHandle();
+        ConnectorMetadata metadata = catalogMetadata.getMetadata(session);
+
+        return metadata.getLanguageFunctions(session.toConnectorSession(catalogHandle), name.asSchemaFunctionName());
+    }
+
+    @Override
     public boolean languageFunctionExists(Session session, QualifiedObjectName name, String signatureToken)
     {
         return getOptionalCatalogMetadata(session, name.catalogName())
@@ -2747,7 +2796,7 @@ public final class MetadataManager
     public WriterScalingOptions getNewTableWriterScalingOptions(Session session, QualifiedObjectName tableName, Map<String, Object> tableProperties)
     {
         CatalogMetadata catalogMetadata = getCatalogMetadataForWrite(session, tableName.catalogName());
-        CatalogHandle catalogHandle = catalogMetadata.getCatalogHandle(session, tableName);
+        CatalogHandle catalogHandle = catalogMetadata.getCatalogHandle(session, tableName, Optional.empty(), Optional.empty());
         ConnectorMetadata metadata = catalogMetadata.getMetadataFor(session, catalogHandle);
         return metadata.getNewTableWriterScalingOptions(session.toConnectorSession(catalogHandle), tableName.asSchemaTableName(), tableProperties);
     }

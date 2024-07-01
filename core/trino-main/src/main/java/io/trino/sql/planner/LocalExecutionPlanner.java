@@ -179,7 +179,7 @@ import io.trino.spiller.PartitioningSpillerFactory;
 import io.trino.spiller.SingleStreamSpillerFactory;
 import io.trino.spiller.SpillerFactory;
 import io.trino.split.PageSinkManager;
-import io.trino.split.PageSourceProvider;
+import io.trino.split.PageSourceManager;
 import io.trino.sql.DynamicFilters;
 import io.trino.sql.PlannerContext;
 import io.trino.sql.gen.ExpressionCompiler;
@@ -194,6 +194,7 @@ import io.trino.sql.ir.Constant;
 import io.trino.sql.ir.Expression;
 import io.trino.sql.ir.Lambda;
 import io.trino.sql.ir.Reference;
+import io.trino.sql.ir.optimizer.IrExpressionEvaluator;
 import io.trino.sql.planner.optimizations.IndexJoinOptimizer;
 import io.trino.sql.planner.plan.AdaptivePlanNode;
 import io.trino.sql.planner.plan.AggregationNode;
@@ -309,7 +310,7 @@ import static io.trino.SystemSessionProperties.getTaskMaxWriterCount;
 import static io.trino.SystemSessionProperties.getTaskMinWriterCount;
 import static io.trino.SystemSessionProperties.getWriterScalingMinDataProcessed;
 import static io.trino.SystemSessionProperties.isAdaptivePartialAggregationEnabled;
-import static io.trino.SystemSessionProperties.isEnableCoordinatorDynamicFiltersDistribution;
+import static io.trino.SystemSessionProperties.isColumnarFilterEvaluationEnabled;
 import static io.trino.SystemSessionProperties.isEnableLargeDynamicFilters;
 import static io.trino.SystemSessionProperties.isForceSpillingOperator;
 import static io.trino.SystemSessionProperties.isSpillEnabled;
@@ -397,7 +398,7 @@ public class LocalExecutionPlanner
     private final PlannerContext plannerContext;
     private final Metadata metadata;
     private final Optional<ExplainAnalyzeContext> explainAnalyzeContext;
-    private final PageSourceProvider pageSourceProvider;
+    private final PageSourceManager pageSourceProvider;
     private final IndexManager indexManager;
     private final NodePartitioningManager nodePartitioningManager;
     private final PageSinkManager pageSinkManager;
@@ -452,7 +453,7 @@ public class LocalExecutionPlanner
     public LocalExecutionPlanner(
             PlannerContext plannerContext,
             Optional<ExplainAnalyzeContext> explainAnalyzeContext,
-            PageSourceProvider pageSourceProvider,
+            PageSourceManager pageSourceProvider,
             IndexManager indexManager,
             NodePartitioningManager nodePartitioningManager,
             PageSinkManager pageSinkManager,
@@ -762,9 +763,6 @@ public class LocalExecutionPlanner
 
         private void registerCoordinatorDynamicFilters(List<DynamicFilters.Descriptor> dynamicFilters)
         {
-            if (!isEnableCoordinatorDynamicFiltersDistribution(taskContext.getSession())) {
-                return;
-            }
             Set<DynamicFilterId> consumedFilterIds = dynamicFilters.stream()
                     .map(DynamicFilters.Descriptor::getId)
                     .collect(toImmutableSet());
@@ -871,10 +869,12 @@ public class LocalExecutionPlanner
             extends PlanVisitor<PhysicalOperation, LocalExecutionPlanContext>
     {
         private final Session session;
+        private final IrExpressionEvaluator evaluator;
 
         private Visitor(Session session)
         {
             this.session = session;
+            evaluator = new IrExpressionEvaluator(plannerContext);
         }
 
         @Override
@@ -1999,9 +1999,10 @@ public class LocalExecutionPlanner
                     .collect(toImmutableList());
 
             try {
+                boolean columnarFilterEvaluationEnabled = isColumnarFilterEvaluationEnabled(session);
                 if (columns != null) {
                     Supplier<CursorProcessor> cursorProcessor = expressionCompiler.compileCursorProcessor(translatedFilter, translatedProjections, sourceNode.getId());
-                    Supplier<PageProcessor> pageProcessor = expressionCompiler.compilePageProcessor(translatedFilter, translatedProjections, Optional.of(context.getStageId() + "_" + planNodeId));
+                    Supplier<PageProcessor> pageProcessor = expressionCompiler.compilePageProcessor(columnarFilterEvaluationEnabled, translatedFilter, translatedProjections, Optional.of(context.getStageId() + "_" + planNodeId));
 
                     SourceOperatorFactory operatorFactory = new ScanFilterAndProjectOperatorFactory(
                             context.getNextOperatorId(),
@@ -2019,7 +2020,7 @@ public class LocalExecutionPlanner
 
                     return new PhysicalOperation(operatorFactory, outputMappings);
                 }
-                Supplier<PageProcessor> pageProcessor = expressionCompiler.compilePageProcessor(translatedFilter, translatedProjections, Optional.of(context.getStageId() + "_" + planNodeId));
+                Supplier<PageProcessor> pageProcessor = expressionCompiler.compilePageProcessor(columnarFilterEvaluationEnabled, translatedFilter, translatedProjections, Optional.of(context.getStageId() + "_" + planNodeId));
 
                 OperatorFactory operatorFactory = FilterAndProjectOperator.createOperatorFactory(
                         context.getNextOperatorId(),
@@ -2116,7 +2117,7 @@ public class LocalExecutionPlanner
                     Expression row = node.getRows().get().get(i);
                     checkState(row.type() instanceof RowType, "unexpected type of Values row: %s", row.type());
                     // evaluate the literal value
-                    SqlRow result = (SqlRow) new IrExpressionInterpreter(row, plannerContext, session).evaluate();
+                    SqlRow result = (SqlRow) evaluator.evaluate(row, session, ImmutableMap.of());
                     int rawIndex = result.getRawIndex();
                     for (int j = 0; j < outputTypes.size(); j++) {
                         // divide row into fields
@@ -4129,7 +4130,7 @@ public class LocalExecutionPlanner
             }
             if (target instanceof MergeTarget mergeTarget) {
                 MergeHandle mergeHandle = mergeTarget.getMergeHandle().orElseThrow(() -> new IllegalArgumentException("mergeHandle not present"));
-                metadata.finishMerge(session, mergeHandle, fragments, statistics);
+                metadata.finishMerge(session, mergeHandle, mergeTarget.getSourceTableHandles(), fragments, statistics);
                 return Optional.empty();
             }
             throw new AssertionError("Unhandled target type: " + target.getClass().getName());

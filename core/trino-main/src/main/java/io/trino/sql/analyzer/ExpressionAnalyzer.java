@@ -25,6 +25,7 @@ import com.google.common.collect.Multimap;
 import io.trino.Session;
 import io.trino.execution.warnings.WarningCollector;
 import io.trino.metadata.FunctionResolver;
+import io.trino.metadata.LanguageFunctionAnalysisException;
 import io.trino.metadata.OperatorNotFoundException;
 import io.trino.metadata.QualifiedObjectName;
 import io.trino.metadata.ResolvedFunction;
@@ -882,7 +883,7 @@ public class ExpressionAnalyzer
                 case EQUAL, NOT_EQUAL -> OperatorType.EQUAL;
                 case LESS_THAN, GREATER_THAN -> OperatorType.LESS_THAN;
                 case LESS_THAN_OR_EQUAL, GREATER_THAN_OR_EQUAL -> OperatorType.LESS_THAN_OR_EQUAL;
-                case IS_DISTINCT_FROM -> OperatorType.IS_DISTINCT_FROM;
+                case IS_DISTINCT_FROM -> OperatorType.IDENTICAL;
             };
 
             return getOperator(context, node, operatorType, node.getLeft(), node.getRight());
@@ -1365,6 +1366,11 @@ public class ExpressionAnalyzer
                 if (e.getLocation().isPresent()) {
                     // If analysis of any of the argument types (which is done lazily to deal with lambda
                     // expressions) fails, we want to report the original reason for the failure
+                    throw e;
+                }
+
+                if (e instanceof LanguageFunctionAnalysisException) {
+                    // report the original reason for language function analysis errors
                     throw e;
                 }
 

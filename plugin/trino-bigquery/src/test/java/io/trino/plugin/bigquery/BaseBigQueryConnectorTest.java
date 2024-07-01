@@ -48,6 +48,7 @@ import static io.trino.spi.type.VarcharType.VARCHAR;
 import static io.trino.testing.MaterializedResult.resultBuilder;
 import static io.trino.testing.MultisetAssertions.assertMultisetsEqual;
 import static io.trino.testing.TestingNames.randomNameSuffix;
+import static io.trino.testing.TestingProperties.requiredNonEmptySystemProperty;
 import static io.trino.testing.assertions.Assert.assertEventually;
 import static java.lang.String.format;
 import static java.util.concurrent.TimeUnit.MINUTES;
@@ -70,7 +71,7 @@ public abstract class BaseBigQueryConnectorTest
     {
         this.bigQuerySqlExecutor = new BigQuerySqlExecutor();
         // Prerequisite: upload region.csv in resources directory to gs://{testing.gcp-storage-bucket}/tpch/tiny/region.csv
-        this.gcpStorageBucket = System.getProperty("testing.gcp-storage-bucket");
+        this.gcpStorageBucket = requiredNonEmptySystemProperty("testing.gcp-storage-bucket");
     }
 
     @Override
@@ -327,20 +328,44 @@ public abstract class BaseBigQueryConnectorTest
         return Optional.of(dataMappingTestSetup);
     }
 
-    @Test
-    @Override
-    public void testNoDataSystemTable()
-    {
-        // TODO (https://github.com/trinodb/trino/issues/6515): Big Query throws an error when trying to read "some_table$data".
-        assertThatThrownBy(super::testNoDataSystemTable)
-                .hasMessageFindingMatch(".*Cannot read partition information from a table that is not partitioned.*");
-        abort("TODO");
-    }
-
     @Override
     protected boolean isColumnNameRejected(Exception exception, String columnName, boolean delimited)
     {
         return nullToEmpty(exception.getMessage()).matches(".*Invalid field name \"%s\". Fields must contain the allowed characters, and be at most 300 characters long..*".formatted(columnName.replace("\\", "\\\\")));
+    }
+
+    @Test // TODO: Move this test to BaseConnectorTest
+    public void testStreamCommentTableSpecialCharacter()
+    {
+        String schemaName = "test_comment" + randomNameSuffix();
+        assertUpdate("CREATE SCHEMA " + schemaName);
+        try {
+            assertUpdate("CREATE TABLE " + schemaName + ".test_comment_semicolon (a integer) COMMENT " + varcharLiteral("a;semicolon"));
+            assertUpdate("CREATE TABLE " + schemaName + ".test_comment_at (a integer) COMMENT " + varcharLiteral("an@at"));
+            assertUpdate("CREATE TABLE " + schemaName + ".test_comment_quote (a integer) COMMENT " + varcharLiteral("a\"quote"));
+            assertUpdate("CREATE TABLE " + schemaName + ".test_comment_apostrophe (a integer) COMMENT " + varcharLiteral("an'apostrophe"));
+            assertUpdate("CREATE TABLE " + schemaName + ".test_comment_backtick (a integer) COMMENT " + varcharLiteral("a`backtick`"));
+            assertUpdate("CREATE TABLE " + schemaName + ".test_comment_slash (a integer) COMMENT " + varcharLiteral("a/slash"));
+            assertUpdate("CREATE TABLE " + schemaName + ".test_comment_backslash (a integer) COMMENT " + varcharLiteral("a\\backslash"));
+            assertUpdate("CREATE TABLE " + schemaName + ".test_comment_question (a integer) COMMENT " + varcharLiteral("a?question"));
+            assertUpdate("CREATE TABLE " + schemaName + ".test_comment_bracket (a integer) COMMENT " + varcharLiteral("[square bracket]"));
+
+            assertQuery(
+                    "SELECT table_name, comment FROM system.metadata.table_comments WHERE catalog_name = 'bigquery' AND schema_name = '" + schemaName + "'",
+                    "VALUES " +
+                            "('test_comment_semicolon', " + varcharLiteral("a;semicolon") + ")," +
+                            "('test_comment_at', " + varcharLiteral("an@at") + ")," +
+                            "('test_comment_quote', " + varcharLiteral("a\"quote") + ")," +
+                            "('test_comment_apostrophe', " + varcharLiteral("an'apostrophe") + ")," +
+                            "('test_comment_backtick', " + varcharLiteral("a`backtick`") + ")," +
+                            "('test_comment_slash', " + varcharLiteral("a/slash") + ")," +
+                            "('test_comment_backslash', " + varcharLiteral("a\\backslash") + ")," +
+                            "('test_comment_question', " + varcharLiteral("a?question") + ")," +
+                            "('test_comment_bracket', " + varcharLiteral("[square bracket]") + ")");
+        }
+        finally {
+            assertUpdate("DROP SCHEMA " + schemaName + " CASCADE");
+        }
     }
 
     @Test
@@ -631,7 +656,7 @@ public abstract class BaseBigQueryConnectorTest
         // Override because the connector throws an exception instead of an empty result when the value is out of supported range
         assertQuery("SELECT orderdate FROM orders WHERE orderdate = DATE '1997-09-14'", "VALUES DATE '1997-09-14'");
         assertThat(query("SELECT * FROM orders WHERE orderdate = DATE '-1996-09-14'"))
-                .nonTrinoExceptionFailure().hasMessageMatching(".*Could not cast literal \"-1996-09-14\" to type DATE.*");
+                .failure().hasMessageMatching(".*Could not cast literal \"-1996-09-14\" to type DATE.*");
     }
 
     @Test
@@ -790,8 +815,7 @@ public abstract class BaseBigQueryConnectorTest
 
             // Verify query cache is empty
             assertThat(query(createNeverDisposition, "SELECT * FROM test." + materializedView))
-                    // TODO should be TrinoException, provide a better error message
-                    .nonTrinoExceptionFailure().hasMessageContaining("Not found");
+                    .failure().hasMessageMatching("Failed to run the query: Not found: Table .* was not found .*");
             // Populate cache and verify it
             assertQuery(queryResultsCacheSession, "SELECT * FROM test." + materializedView, "VALUES 5");
             assertQuery(createNeverDisposition, "SELECT * FROM test." + materializedView, "VALUES 5");
@@ -843,8 +867,7 @@ public abstract class BaseBigQueryConnectorTest
             assertQuery("DESCRIBE test.\"" + wildcardTable + "\"", "VALUES ('value', 'varchar', '', '')");
 
             assertThat(query("SELECT * FROM test.\"" + wildcardTable + "\""))
-                    // TODO should be TrinoException
-                    .nonTrinoExceptionFailure().hasMessageContaining("Cannot read field of type INT64 as STRING Field: value");
+                    .failure().hasMessageContaining("Cannot read field of type INT64 as STRING Field: value");
         }
         finally {
             onBigQuery("DROP TABLE IF EXISTS test." + firstTable);
@@ -856,7 +879,7 @@ public abstract class BaseBigQueryConnectorTest
     public void testMissingWildcardTable()
     {
         assertThat(query("SELECT * FROM test.\"test_missing_wildcard_table_*\""))
-                .nonTrinoExceptionFailure().hasMessageEndingWith("does not match any table.");
+                .failure().hasMessageMatching(".* Table .* does not exist");
     }
 
     @Override
@@ -995,7 +1018,7 @@ public abstract class BaseBigQueryConnectorTest
             // Check that column 'two' is not supported.
             assertQuery("SELECT column_name FROM information_schema.columns WHERE table_schema = 'test' AND table_name = '" + tableName + "'", "VALUES 'one', 'three'");
             assertThat(query("SELECT * FROM TABLE(bigquery.system.query(query => 'SELECT * FROM test." + tableName + "'))"))
-                    .nonTrinoExceptionFailure().hasMessageContaining("Unsupported type");
+                    .failure().hasMessageContaining("Unsupported type");
         }
         finally {
             onBigQuery("DROP TABLE IF EXISTS test." + tableName);

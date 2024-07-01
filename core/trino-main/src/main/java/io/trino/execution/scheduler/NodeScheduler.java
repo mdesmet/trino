@@ -13,9 +13,9 @@
  */
 package io.trino.execution.scheduler;
 
-import com.google.common.collect.HashMultimap;
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMultimap;
+import com.google.common.collect.LinkedHashMultimap;
 import com.google.common.collect.Multimap;
 import com.google.common.util.concurrent.Futures;
 import com.google.common.util.concurrent.ListenableFuture;
@@ -158,11 +158,11 @@ public class NodeScheduler
             long maxSplitsWeightPerNode,
             long minPendingSplitsWeightPerTask,
             int maxUnacknowledgedSplitsPerTask,
-            List<Split> splits,
+            Set<Split> splits,
             List<RemoteTask> existingTasks,
             BucketNodeMap bucketNodeMap)
     {
-        Multimap<InternalNode, Split> assignments = HashMultimap.create();
+        Multimap<InternalNode, Split> assignments = LinkedHashMultimap.create();
         NodeAssignmentStats assignmentStats = new NodeAssignmentStats(nodeTaskMap, nodeMap, existingTasks);
 
         Set<InternalNode> blockedNodes = new HashSet<>();

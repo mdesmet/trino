@@ -34,17 +34,24 @@ The coordinator and all workers must have network access to the Hive metastore
 and the storage system. Hive metastore access with the Thrift protocol defaults
 to using port 9083.
 
-Data files must be in a supported file format. Some file formats can be
-configured using file format configuration properties per catalog:
+Data files must be in a supported file format. File formats can be
+configured using the [`format` table property](hive-table-properties)
+and other specific properties:
 
 - {ref}`ORC <hive-orc-configuration>`
 - {ref}`Parquet <hive-parquet-configuration>`
 - Avro
-- RCText (RCFile using ColumnarSerDe)
-- RCBinary (RCFile using LazyBinaryColumnarSerDe)
+
+In the case of serializable formats, only specific
+[SerDes](https://www.wikipedia.org/wiki/SerDes) are allowed:
+
+- RCText - RCFile using `ColumnarSerDe`
+- RCBinary - RCFile using `LazyBinaryColumnarSerDe`
 - SequenceFile
-- JSON (using org.apache.hive.hcatalog.data.JsonSerDe)
-- CSV (using org.apache.hadoop.hive.serde2.OpenCSVSerde)
+- CSV - using `org.apache.hadoop.hive.serde2.OpenCSVSerde`
+- JSON - using `org.apache.hive.hcatalog.data.JsonSerDe`
+- OPENX_JSON - OpenX JSON SerDe from `org.openx.data.jsonserde.JsonSerDe`. Find
+  more [details about the Trino implementation in the source repository](https://github.com/trinodb/trino/tree/master/lib/trino-hive-formats/src/main/java/io/trino/hive/formats/line/openxjson/README.md).
 - TextFile
 
 (hive-configuration)=
@@ -134,6 +141,8 @@ Hive connector documentation.
     * `APPEND` - appends data to existing partitions
     * `OVERWRITE` - overwrites existing partitions
     * `ERROR` - modifying existing partitions is not allowed
+
+    The equivalent catalog session property is `insert_existing_partitions_behavior`.
   - `APPEND`
 * - `hive.target-max-file-size`
   - Best effort maximum size of new files.
@@ -195,8 +204,10 @@ Hive connector documentation.
   - JVM default
 * - `hive.timestamp-precision`
   - Specifies the precision to use for Hive columns of type `TIMESTAMP`.
-    Possible values are `MILLISECONDS`, `MICROSECONDS` and `NANOSECONDS`. Values
-    with higher precision than configured are rounded.
+    Possible values are `MILLISECONDS`, `MICROSECONDS` and `NANOSECONDS`.
+    Values with higher precision than configured are rounded. The equivalent
+    [catalog session property](/sql/set-session) is `timestamp_precision` for
+    session specific use.
   - `MILLISECONDS`
 * - `hive.temporary-staging-directory-enabled`
   - Controls whether the temporary staging directory configured at
@@ -311,7 +322,7 @@ the catalog properties file. This property must be one of the following values:
 (hive-sql-standard-based-authorization)=
 ### SQL standard based authorization
 
-When `sql-standard` security is enabled, Trino enforces the same SQLuyrity
+When `sql-standard` security is enabled, Trino enforces the same SQL
 standard-based authorization as Hive does.
 
 Since Trino's `ROLE` syntax support matches the SQL standard, and
@@ -330,7 +341,6 @@ limitations and differences:
   changed with `ALTER SCHEMA schema SET AUTHORIZATION user`
 
 (hive-sql-support)=
-
 ## SQL support
 
 The connector provides read access and write access to data and metadata in the
@@ -362,7 +372,6 @@ on migrating from Hive to Trino.
 The following sections provide Hive-specific information regarding SQL support.
 
 (hive-examples)=
-
 ### Basic usage examples
 
 The examples shown here work on Google Cloud Storage by replacing `s3://` with
@@ -483,7 +492,6 @@ CALL system.drop_stats(
 ```
 
 (hive-procedures)=
-
 ### Procedures
 
 Use the {doc}`/sql/call` statement to perform data manipulation or
@@ -521,7 +529,6 @@ The following procedures are available:
   entire table.
 
 (register-partition)=
-
 - `system.register_partition(schema_name, table_name, partition_columns, partition_values, location)`
 
   Registers existing location as a new partition in the metastore for the specified table.
@@ -533,14 +540,12 @@ The following procedures are available:
   is set to `true`.
 
 (unregister-partition)=
-
 - `system.unregister_partition(schema_name, table_name, partition_columns, partition_values)`
 
   Unregisters given, existing partition in the metastore for the specified table.
   The partition data is not deleted.
 
 (hive-flush-metadata-cache)=
-
 - `system.flush_metadata_cache()`
 
   Flush all Hive metadata caches.
@@ -556,7 +561,6 @@ The following procedures are available:
   Procedure requires named parameters to be passed.
 
 (hive-data-management)=
-
 ### Data management
 
 The {ref}`sql-data-management` functionality includes support for `INSERT`,
@@ -581,7 +585,6 @@ ACID tables created with [Hive Streaming Ingest](https://cwiki.apache.org/conflu
 are not supported.
 
 (hive-schema-and-table-management)=
-
 ### Schema and table management
 
 The Hive connector supports querying and manipulating Hive tables and schemas
@@ -608,7 +611,7 @@ type conversions.
   - `BOOLEAN`, `TINYINT`, `SMALLINT`, `INTEGER`, `BIGINT`, `REAL`, `DOUBLE`, `TIMESTAMP`, `DATE`, `CHAR` as well as
     narrowing conversions for `VARCHAR`
 * - `CHAR`
-  - narrowing conversions for `CHAR`
+  - `VARCHAR`, narrowing conversions for `CHAR`
 * - `TINYINT`
   - `VARCHAR`, `SMALLINT`, `INTEGER`, `BIGINT`, `DOUBLE`, `DECIMAL`
 * - `SMALLINT`
@@ -636,7 +639,6 @@ or converting the string `'1234'` to a `TINYINT` (which has a
 maximum value of `127`).
 
 (hive-avro-schema)=
-
 #### Avro schema evolution
 
 Trino supports querying and manipulating Hive tables with the Avro storage
@@ -705,7 +707,6 @@ The following operations are not supported when `avro_schema_url` is set:
 - `ALTER TABLE` commands modifying columns are not supported.
 
 (hive-alter-table-execute)=
-
 #### ALTER TABLE EXECUTE
 
 The connector supports the following commands for use with {ref}`ALTER TABLE
@@ -735,7 +736,6 @@ outcomes:
 :::
 
 (hive-table-properties)=
-
 #### Table properties
 
 Table properties supply or set metadata for the underlying tables. This
@@ -790,9 +790,9 @@ WITH (format='CSV',
   -
 * - `format`
   - The table file format. Valid values include `ORC`, `PARQUET`, `AVRO`,
-    `RCBINARY`, `RCTEXT`, `SEQUENCEFILE`, `JSON`, `TEXTFILE`, `CSV`, and
-    `REGEX`. The catalog property `hive.storage-format` sets the default value
-    and can change it to a different default.
+    `RCBINARY`, `RCTEXT`, `SEQUENCEFILE`, `JSON`, `OPENX_JSON`, `TEXTFILE`,
+    `CSV`, and `REGEX`. The catalog property `hive.storage-format` sets the
+    default value and can change it to a different default.
   -
 * - `null_format`
   - The serialization format for `NULL` value. Requires TextFile, RCText, or
@@ -863,7 +863,6 @@ WITH (format='CSV',
 :::
 
 (hive-special-tables)=
-
 #### Metadata tables
 
 The raw Hive table properties are available as a hidden table, containing a
@@ -910,7 +909,6 @@ SELECT * FROM example.web."page_views$partitions";
 ```
 
 (hive-column-properties)=
-
 #### Column properties
 
 :::{list-table} Hive connector column properties
@@ -973,7 +971,6 @@ SELECT * FROM example.web."page_views$partitions";
 :::
 
 (hive-special-columns)=
-
 #### Metadata columns
 
 In addition to the defined columns, the Hive connector automatically exposes
@@ -1004,7 +1001,6 @@ WHERE "$partition" = 'ds=2016-08-09/country=US'
 ```
 
 (hive-sql-view-management)=
-
 ### View management
 
 Trino allows reading from Hive materialized views, and can be configured to
@@ -1016,7 +1012,6 @@ The Hive connector supports reading from Hive materialized views.
 In Trino, these views are presented as regular, read-only tables.
 
 (hive-views)=
-
 #### Hive views
 
 Hive views are defined in HiveQL and stored in the Hive Metastore Service. They
@@ -1098,7 +1093,6 @@ functionality:
 - Ability to process custom UDFs
 
 (hive-fte-support)=
-
 ## Fault-tolerant execution support
 
 The connector supports {doc}`/admin/fault-tolerant-execution` of query
@@ -1160,7 +1154,6 @@ and by default will also collect column level statistics:
 :::
 
 (hive-analyze)=
-
 #### Updating table and partition statistics
 
 If your queries are complex and include joining large data sets,
@@ -1212,7 +1205,6 @@ CALL system.drop_stats(
 ```
 
 (hive-dynamic-filtering)=
-
 ### Dynamic filtering
 
 The Hive connector supports the {doc}`dynamic filtering </admin/dynamic-filtering>` optimization.
@@ -1242,7 +1234,6 @@ time until the collection of dynamic filters by using the configuration property
 session property `<hive-catalog>.dynamic_filtering_wait_timeout`.
 
 (hive-table-redirection)=
-
 ### Table redirection
 
 ```{include} table-redirection.fragment
@@ -1260,7 +1251,6 @@ The connector supports configuring and using [file system
 caching](/object-storage/file-system-cache).
 
 (hive-performance-tuning-configuration)=
-
 ### Performance tuning configuration properties
 
 The following table describes performance tuning properties for the Hive

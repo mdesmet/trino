@@ -83,6 +83,7 @@ import io.trino.spi.type.ArrayType;
 import io.trino.spi.type.RowType;
 import io.trino.spi.type.Type;
 import io.trino.sql.PlannerContext;
+import io.trino.sql.SqlEnvironmentConfig;
 import io.trino.sql.parser.ParsingException;
 import io.trino.sql.parser.SqlParser;
 import io.trino.sql.planner.OptimizerConfig;
@@ -943,11 +944,11 @@ public class TestAnalyzer
                 .hasErrorCode(TABLE_NOT_FOUND)
                 .hasMessage("line 1:15: Table 'tpch.s1.foo' does not exist");
         assertFails("SELECT * FROM foo FOR TIMESTAMP AS OF TIMESTAMP '2021-03-01 00:00:01'")
-                .hasErrorCode(TABLE_NOT_FOUND)
-                .hasMessage("line 1:15: Table 'tpch.s1.foo' does not exist");
+                .hasErrorCode(NOT_SUPPORTED)
+                .hasMessage("This connector does not support versioned tables");
         assertFails("SELECT * FROM foo FOR VERSION AS OF 'version1'")
-                .hasErrorCode(TABLE_NOT_FOUND)
-                .hasMessage("line 1:15: Table 'tpch.s1.foo' does not exist");
+                .hasErrorCode(NOT_SUPPORTED)
+                .hasMessage("This connector does not support versioned tables");
         // table name containing dots
         assertFails("SELECT * FROM \"table.not.existing\"")
                 .hasErrorCode(TABLE_NOT_FOUND)
@@ -6372,6 +6373,20 @@ public class TestAnalyzer
                                       ORDER BY b))
                 """);
 
+        analyze("SELECT * FROM TABLE(system.table_argument_function(input => TABLE(t1) PARTITION BY \"a\"))");
+
+        analyze("SELECT * FROM TABLE(system.table_argument_function(input => TABLE(t1) ORDER BY \"a\"))");
+
+        // TODO Fix failure when partitioning by a nested field
+        assertFails("SELECT * FROM TABLE(system.table_argument_function(input => TABLE(SELECT CAST(ROW(1) AS ROW(x BIGINT)) a) PARTITION BY a.x))")
+                .hasErrorCode(COLUMN_NOT_FOUND)
+                .hasMessage("line 1:120: Column a.x is not present in the input relation");
+
+        // TODO Fix failure when ordering by a nested field
+        assertFails("SELECT * FROM TABLE(system.table_argument_function(input => TABLE(SELECT CAST(ROW(1) AS ROW(x BIGINT)) a) ORDER BY a.x))")
+                .hasErrorCode(COLUMN_NOT_FOUND)
+                .hasMessage("line 1:116: Column a.x is not present in the input relation");
+
         assertFails("SELECT * FROM TABLE(system.table_argument_row_semantics_function(input => TABLE(t1) PARTITION BY a))")
                 .hasErrorCode(INVALID_FUNCTION_ARGUMENT)
                 .hasMessage("line 1:66: Invalid argument INPUT. Partitioning specified for table argument with row semantics");
@@ -7676,6 +7691,7 @@ public class TestAnalyzer
     private Analyzer createAnalyzer(Session session, AccessControl accessControl)
     {
         StatementRewrite statementRewrite = new StatementRewrite(ImmutableSet.of(new ShowQueriesRewrite(
+                new SqlEnvironmentConfig(),
                 plannerContext.getMetadata(),
                 SQL_PARSER,
                 accessControl,

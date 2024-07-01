@@ -25,6 +25,8 @@ import io.trino.filesystem.TrinoFileSystemFactory;
 import io.trino.filesystem.TrinoInputFile;
 import io.trino.parquet.ParquetDataSource;
 import io.trino.parquet.ParquetReaderOptions;
+import io.trino.parquet.metadata.FileMetadata;
+import io.trino.parquet.metadata.ParquetMetadata;
 import io.trino.parquet.reader.MetadataReader;
 import io.trino.plugin.deltalake.delete.PageFilter;
 import io.trino.plugin.deltalake.delete.PositionDeleteFilter;
@@ -57,8 +59,6 @@ import io.trino.spi.predicate.Domain;
 import io.trino.spi.predicate.TupleDomain;
 import io.trino.spi.type.StandardTypes;
 import io.trino.spi.type.TypeManager;
-import org.apache.parquet.hadoop.metadata.FileMetaData;
-import org.apache.parquet.hadoop.metadata.ParquetMetadata;
 import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.Type;
 import org.joda.time.DateTimeZone;
@@ -90,6 +90,7 @@ import static io.trino.plugin.deltalake.DeltaLakeSessionProperties.getParquetMax
 import static io.trino.plugin.deltalake.DeltaLakeSessionProperties.getParquetSmallFileThreshold;
 import static io.trino.plugin.deltalake.DeltaLakeSessionProperties.isParquetIgnoreStatistics;
 import static io.trino.plugin.deltalake.DeltaLakeSessionProperties.isParquetUseColumnIndex;
+import static io.trino.plugin.deltalake.DeltaLakeSessionProperties.isParquetVectorizedDecodingEnabled;
 import static io.trino.plugin.deltalake.DeltaLakeSplitManager.partitionMatchesPredicate;
 import static io.trino.plugin.deltalake.delete.DeletionVectors.readDeletionVectors;
 import static io.trino.plugin.deltalake.transactionlog.DeltaLakeSchemaSupport.extractSchema;
@@ -219,7 +220,8 @@ public class DeltaLakePageSourceProvider
                 .withMaxReadBlockRowCount(getParquetMaxReadBlockRowCount(session))
                 .withSmallFileThreshold(getParquetSmallFileThreshold(session))
                 .withUseColumnIndex(isParquetUseColumnIndex(session))
-                .withIgnoreStatistics(isParquetIgnoreStatistics(session));
+                .withIgnoreStatistics(isParquetIgnoreStatistics(session))
+                .withVectorizedDecodingEnabled(isParquetVectorizedDecodingEnabled(session));
 
         Map<Integer, String> parquetFieldIdToName = columnMappingMode == ColumnMappingMode.ID ? loadParquetIdAndNameMapping(inputFile, options) : ImmutableMap.of();
 
@@ -266,8 +268,8 @@ public class DeltaLakePageSourceProvider
                 return Optional.empty();
             }
 
-            List<DeltaLakeColumnHandle> requiredColumns = ImmutableList.<DeltaLakeColumnHandle>builderWithExpectedSize(deltaLakeColumns.size() + 1)
-                    .addAll(deltaLakeColumns)
+            List<DeltaLakeColumnHandle> requiredColumns = ImmutableList.<DeltaLakeColumnHandle>builderWithExpectedSize(regularColumns.size() + 1)
+                    .addAll(regularColumns)
                     .add(rowPositionColumnHandle())
                     .build();
             PositionDeleteFilter deleteFilter = readDeletes(fileSystem, Location.of(table.location()), split.getDeletionVector().get());
@@ -305,7 +307,7 @@ public class DeltaLakePageSourceProvider
     {
         try (ParquetDataSource dataSource = new TrinoParquetDataSource(inputFile, options, fileFormatDataSourceStats)) {
             ParquetMetadata parquetMetadata = MetadataReader.readFooter(dataSource, Optional.empty());
-            FileMetaData fileMetaData = parquetMetadata.getFileMetaData();
+            FileMetadata fileMetaData = parquetMetadata.getFileMetaData();
             MessageType fileSchema = fileMetaData.getSchema();
 
             return fileSchema.getFields().stream()

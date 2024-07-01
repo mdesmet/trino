@@ -27,7 +27,9 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Maps;
 import com.google.errorprone.annotations.CanIgnoreReturnValue;
+import io.airlift.log.Level;
 import io.airlift.log.Logger;
+import io.airlift.log.Logging;
 import io.trino.plugin.tpch.TpchPlugin;
 import io.trino.testing.DistributedQueryRunner;
 import io.trino.testing.QueryRunner;
@@ -49,15 +51,21 @@ import static com.google.cloud.bigquery.BigQuery.DatasetListOption.labelFilter;
 import static io.airlift.testing.Closeables.closeAllSuppress;
 import static io.trino.plugin.tpch.TpchMetadata.TINY_SCHEMA_NAME;
 import static io.trino.testing.QueryAssertions.copyTpchTables;
+import static io.trino.testing.TestingProperties.requiredNonEmptySystemProperty;
 import static io.trino.testing.TestingSession.testSessionBuilder;
 import static java.lang.String.format;
 import static java.util.Objects.requireNonNull;
 
 public final class BigQueryQueryRunner
 {
-    private static final String BIGQUERY_CREDENTIALS_KEY = requireNonNull(System.getProperty("bigquery.credentials-key"), "bigquery.credentials-key is not set");
+    private static final String BIGQUERY_CREDENTIALS_KEY = requiredNonEmptySystemProperty("bigquery.credentials-key");
     public static final String TPCH_SCHEMA = "tpch";
     public static final String TEST_SCHEMA = "test";
+
+    static {
+        Logging logging = Logging.initialize();
+        logging.setLevel("com.google.cloud.bigquery.storage", Level.OFF);
+    }
 
     private BigQueryQueryRunner() {}
 
@@ -214,7 +222,7 @@ public final class BigQueryQueryRunner
             throws Exception
     {
         QueryRunner queryRunner = BigQueryQueryRunner.builder()
-                .setExtraProperties(Map.of("http-server.http.port", "8080"))
+                .setCoordinatorProperties(Map.of("http-server.http.port", "8080"))
                 .setInitialTables(TpchTable.getTables())
                 .build();
         Logger log = Logger.get(BigQueryQueryRunner.class);

@@ -187,7 +187,7 @@ public class MariaDbClient
             IdentifierMapping identifierMapping,
             RemoteQueryModifier queryModifier)
     {
-        super("`", connectionFactory, queryBuilder, config.getJdbcTypesMappedToVarchar(), identifierMapping, queryModifier, false);
+        super("`", connectionFactory, queryBuilder, config.getJdbcTypesMappedToVarchar(), identifierMapping, queryModifier, true);
 
         JdbcTypeHandle bigintTypeHandle = new JdbcTypeHandle(Types.BIGINT, Optional.of("bigint"), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty());
         this.connectorExpressionRewriter = JdbcConnectorExpressionRewriterBuilder.newBuilder()
@@ -307,6 +307,19 @@ public class MariaDbClient
                 null,
                 escapeObjectNameForMetadataQuery(tableName, metadata.getSearchStringEscape()).orElse(null),
                 getTableTypes().map(types -> types.toArray(String[]::new)).orElse(null));
+    }
+
+    @Override
+    protected ResultSet getAllTableColumns(Connection connection, Optional<String> remoteSchemaName)
+            throws SQLException
+    {
+        // MariaDB maps their "database" to SQL catalogs and does not have schemas
+        DatabaseMetaData metadata = connection.getMetaData();
+        return metadata.getColumns(
+                remoteSchemaName.orElse(null),
+                null,
+                null,
+                null);
     }
 
     @Override
@@ -670,7 +683,7 @@ public class MariaDbClient
     @Override
     protected boolean isSupportedJoinCondition(ConnectorSession session, JdbcJoinCondition joinCondition)
     {
-        if (joinCondition.getOperator() == JoinCondition.Operator.IS_DISTINCT_FROM) {
+        if (joinCondition.getOperator() == JoinCondition.Operator.IDENTICAL) {
             // Not supported in MariaDB
             return false;
         }

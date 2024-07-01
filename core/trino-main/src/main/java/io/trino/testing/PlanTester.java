@@ -75,6 +75,7 @@ import io.trino.execution.scheduler.NodeScheduler;
 import io.trino.execution.scheduler.NodeSchedulerConfig;
 import io.trino.execution.scheduler.UniformNodeSelectorFactory;
 import io.trino.execution.warnings.WarningCollector;
+import io.trino.memory.LocalMemoryManager;
 import io.trino.memory.MemoryManagerConfig;
 import io.trino.memory.NodeMemoryConfig;
 import io.trino.metadata.AnalyzePropertyManager;
@@ -145,6 +146,7 @@ import io.trino.split.PageSourceManager;
 import io.trino.split.SplitManager;
 import io.trino.split.SplitSource;
 import io.trino.sql.PlannerContext;
+import io.trino.sql.SqlEnvironmentConfig;
 import io.trino.sql.analyzer.Analysis;
 import io.trino.sql.analyzer.Analyzer;
 import io.trino.sql.analyzer.AnalyzerFactory;
@@ -156,6 +158,7 @@ import io.trino.sql.gen.JoinCompiler;
 import io.trino.sql.gen.JoinFilterFunctionCompiler;
 import io.trino.sql.gen.OrderingCompiler;
 import io.trino.sql.gen.PageFunctionCompiler;
+import io.trino.sql.gen.columnar.ColumnarFilterCompiler;
 import io.trino.sql.parser.SqlParser;
 import io.trino.sql.planner.AdaptivePlanner;
 import io.trino.sql.planner.CompilerConfig;
@@ -222,7 +225,7 @@ import static io.trino.connector.CatalogServiceProviderModule.createIndexProvide
 import static io.trino.connector.CatalogServiceProviderModule.createMaterializedViewPropertyManager;
 import static io.trino.connector.CatalogServiceProviderModule.createNodePartitioningProvider;
 import static io.trino.connector.CatalogServiceProviderModule.createPageSinkProvider;
-import static io.trino.connector.CatalogServiceProviderModule.createPageSourceProvider;
+import static io.trino.connector.CatalogServiceProviderModule.createPageSourceProviderFactory;
 import static io.trino.connector.CatalogServiceProviderModule.createSchemaPropertyManager;
 import static io.trino.connector.CatalogServiceProviderModule.createSplitManagerProvider;
 import static io.trino.connector.CatalogServiceProviderModule.createTableFunctionProvider;
@@ -283,6 +286,7 @@ public class PlanTester
     private final AnalyzePropertyManager analyzePropertyManager;
 
     private final PageFunctionCompiler pageFunctionCompiler;
+    private final ColumnarFilterCompiler filterCompiler;
     private final ExpressionCompiler expressionCompiler;
     private final JoinFilterFunctionCompiler joinFilterFunctionCompiler;
     private final JoinCompiler joinCompiler;
@@ -373,9 +377,10 @@ public class PlanTester
                 transactionManager,
                 typeManager,
                 nodeSchedulerConfig,
-                optimizerConfig));
+                optimizerConfig,
+                new LocalMemoryManager(new NodeMemoryConfig())));
         this.splitManager = new SplitManager(createSplitManagerProvider(catalogManager), tracer, new QueryManagerConfig());
-        this.pageSourceManager = new PageSourceManager(createPageSourceProvider(catalogManager));
+        this.pageSourceManager = new PageSourceManager(createPageSourceProviderFactory(catalogManager));
         this.pageSinkManager = new PageSinkManager(createPageSinkProvider(catalogManager));
         this.indexManager = new IndexManager(createIndexProvider(catalogManager));
         NodeScheduler nodeScheduler = new NodeScheduler(new UniformNodeSelectorFactory(nodeManager, nodeSchedulerConfig, new NodeTaskMap(finalizerService)));
@@ -401,7 +406,8 @@ public class PlanTester
 
         this.plannerContext = new PlannerContext(metadata, typeOperators, blockEncodingSerde, typeManager, functionManager, languageFunctionManager, tracer);
         this.pageFunctionCompiler = new PageFunctionCompiler(functionManager, 0);
-        this.expressionCompiler = new ExpressionCompiler(functionManager, pageFunctionCompiler);
+        this.filterCompiler = new ColumnarFilterCompiler(functionManager, 0);
+        this.expressionCompiler = new ExpressionCompiler(functionManager, pageFunctionCompiler, filterCompiler);
         this.joinFilterFunctionCompiler = new JoinFilterFunctionCompiler(functionManager);
 
         this.statementAnalyzerFactory = new StatementAnalyzerFactory(
@@ -926,6 +932,7 @@ public class PlanTester
                         new DescribeInputRewrite(sqlParser),
                         new DescribeOutputRewrite(sqlParser),
                         new ShowQueriesRewrite(
+                                new SqlEnvironmentConfig(),
                                 plannerContext.getMetadata(),
                                 sqlParser,
                                 accessControl,
