@@ -16,8 +16,6 @@
 
 ## Accumulo connector
 
-## Atop connector
-
 ## BigQuery connector
 
 ## Blackhole connector
@@ -71,8 +69,6 @@
 ## PostgreSQL connector
 
 ## Prometheus connector
-
-## Raptor connector
 
 ## Redis connector
 
