@@ -3,7 +3,7 @@
 ## Synopsis
 
 ```text
-[ WITH FUNCTION udf ]
+[ WITH [ SESSION name = expression [, ...] ] [ FUNCTION udf ] ]
 [ WITH [ RECURSIVE ] with_query [, ...] ]
 SELECT [ ALL | DISTINCT ] select_expression [, ...]
 [ FROM from_item [, ...] ]
@@ -1276,6 +1276,13 @@ LEFT JOIN UNNEST(checkpoints) AS t(checkpoint) ON TRUE;
 ```
 
 Note that in case of using `LEFT JOIN` the only condition supported by the current implementation is `ON TRUE`.
+
+(select-json-table)=
+## JSON_TABLE
+
+`JSON_TABLE` transforms JSON data into a relational table format. Like `UNNEST`
+and `LATERAL`, use `JSON_TABLE` in the `FROM` clause of a `SELECT` statement.
+For more information, see [`JSON_TABLE`](json-table).
 
 ## Joins
 
