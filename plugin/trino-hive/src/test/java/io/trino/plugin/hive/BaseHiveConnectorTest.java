@@ -250,7 +250,8 @@ public abstract class BaseHiveConnectorTest
         return switch (connectorBehavior) {
             case SUPPORTS_MULTI_STATEMENT_WRITES,
                  SUPPORTS_REPORTING_WRITTEN_BYTES -> true; // FIXME: Fails because only allowed with transactional tables
-            case SUPPORTS_ADD_FIELD,
+            case SUPPORTS_ADD_COLUMN_WITH_POSITION,
+                 SUPPORTS_ADD_FIELD,
                  SUPPORTS_CREATE_MATERIALIZED_VIEW,
                  SUPPORTS_DROP_FIELD,
                  SUPPORTS_MERGE,
@@ -348,6 +349,14 @@ public abstract class BaseHiveConnectorTest
     public void testUpdateMultipleCondition()
     {
         assertThatThrownBy(super::testUpdateMultipleCondition)
+                .hasMessage(MODIFYING_NON_TRANSACTIONAL_TABLE_MESSAGE);
+    }
+
+    @Test
+    @Override
+    public void testUpdateWithNullValues()
+    {
+        assertThatThrownBy(super::testUpdateWithNullValues)
                 .hasMessage(MODIFYING_NON_TRANSACTIONAL_TABLE_MESSAGE);
     }
 
@@ -588,11 +597,11 @@ public abstract class BaseHiveConnectorTest
     {
         assertQueryFails(
                 "SET SESSION hive.query_partition_filter_required_schemas = ARRAY['tpch', null]",
-                "line 1:1: Invalid null or empty value in query_partition_filter_required_schemas property");
+                "line 1:60: Invalid null or empty value in query_partition_filter_required_schemas property");
 
         assertQueryFails(
                 "SET SESSION hive.query_partition_filter_required_schemas = ARRAY['tpch', '']",
-                "line 1:1: Invalid null or empty value in query_partition_filter_required_schemas property");
+                "line 1:60: Invalid null or empty value in query_partition_filter_required_schemas property");
     }
 
     @Test
@@ -9337,28 +9346,28 @@ public abstract class BaseHiveConnectorTest
 
         assertThat(getColumnComment(table, "regular_column")).isEqualTo("regular column comment");
         assertThat(getColumnComment(table, "partition_column")).isEqualTo("partition column comment");
-        assertThat(getTableComment("hive", "tpch", table)).isEqualTo("table comment");
+        assertThat(getTableComment(table)).isEqualTo("table comment");
 
         assertUpdate("COMMENT ON COLUMN %s.regular_column IS 'new regular column comment'".formatted(table));
         assertThat(getColumnComment(table, "regular_column")).isEqualTo("new regular column comment");
         assertUpdate("COMMENT ON COLUMN %s.partition_column IS 'new partition column comment'".formatted(table));
         assertThat(getColumnComment(table, "partition_column")).isEqualTo("new partition column comment");
         assertUpdate("COMMENT ON TABLE %s IS 'new table comment'".formatted(table));
-        assertThat(getTableComment("hive", "tpch", table)).isEqualTo("new table comment");
+        assertThat(getTableComment(table)).isEqualTo("new table comment");
 
         assertUpdate("COMMENT ON COLUMN %s.regular_column IS ''".formatted(table));
         assertThat(getColumnComment(table, "regular_column")).isEmpty();
         assertUpdate("COMMENT ON COLUMN %s.partition_column IS ''".formatted(table));
         assertThat(getColumnComment(table, "partition_column")).isEmpty();
         assertUpdate("COMMENT ON TABLE %s IS ''".formatted(table));
-        assertThat(getTableComment("hive", "tpch", table)).isEmpty();
+        assertThat(getTableComment(table)).isEmpty();
 
         assertUpdate("COMMENT ON COLUMN %s.regular_column IS NULL".formatted(table));
         assertThat(getColumnComment(table, "regular_column")).isNull();
         assertUpdate("COMMENT ON COLUMN %s.partition_column IS NULL".formatted(table));
         assertThat(getColumnComment(table, "partition_column")).isNull();
         assertUpdate("COMMENT ON TABLE %s IS NULL".formatted(table));
-        assertThat(getTableComment("hive", "tpch", table)).isNull();
+        assertThat(getTableComment(table)).isNull();
 
         assertUpdate("DROP TABLE " + table);
     }

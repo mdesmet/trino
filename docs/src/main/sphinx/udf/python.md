@@ -4,10 +4,6 @@ A Python user-defined function is a [user-defined function](/udf) that uses the
 [Python programming language and statements](python-udf-lang) for the definition
 of the function.
 
-:::{warning}
-Python user-defined functions are an experimental feature.
-:::
-
 ## Python UDF declaration
 
 Declare a Python UDF as [inline](udf-inline) or [catalog UDF](udf-catalog) with
@@ -44,7 +40,7 @@ value `x` multiplied by two. The example shows declaration as [](udf-inline) and
 invocation with the value `21` to yield the result `42`.
 
 Set the language to `PYTHON` to override the default `SQL` for [](/udf/sql).
-The Python code is enclosed with ``$$` and must use valid formatting.
+The Python code is enclosed with `$$` and must use valid formatting.
 
 ```text
 WITH
