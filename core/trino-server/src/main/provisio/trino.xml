@@ -33,6 +33,12 @@
     </artifactSet>
 
     <!-- Plugins -->
+    <artifactSet to="plugin/ai-functions">
+        <artifact id="${project.groupId}:trino-ai-functions:zip:${project.version}">
+            <unpack />
+        </artifact>
+    </artifactSet>
+
     <artifactSet to="plugin/apache-ranger">
         <artifact id="${project.groupId}:trino-ranger:zip:${project.version}">
             <unpack />
@@ -74,6 +80,12 @@
 
     <artifactSet to="plugin/druid">
         <artifact id="${project.groupId}:trino-druid:zip:${project.version}">
+            <unpack />
+        </artifact>
+    </artifactSet>
+
+    <artifactSet to="plugin/duckdb">
+        <artifact id="${project.groupId}:trino-duckdb:zip:${project.version}">
             <unpack />
         </artifact>
     </artifactSet>
@@ -195,14 +207,14 @@
         </artifact>
     </artifactSet>
 
-    <artifactSet to="plugin/kinesis">
-        <artifact id="${project.groupId}:trino-kinesis:zip:${project.version}">
+    <artifactSet to="plugin/kudu">
+        <artifact id="${project.groupId}:trino-kudu:zip:${project.version}">
             <unpack />
         </artifact>
     </artifactSet>
 
-    <artifactSet to="plugin/kudu">
-        <artifact id="${project.groupId}:trino-kudu:zip:${project.version}">
+    <artifactSet to="plugin/loki">
+        <artifact id="${project.groupId}:trino-loki:zip:${project.version}">
             <unpack />
         </artifact>
     </artifactSet>

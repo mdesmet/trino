@@ -60,7 +60,6 @@ import static java.util.concurrent.TimeUnit.SECONDS;
 public final class SystemSessionProperties
         implements SystemSessionPropertiesProvider
 {
-    public static final String OPTIMIZE_HASH_GENERATION = "optimize_hash_generation";
     public static final String JOIN_DISTRIBUTION_TYPE = "join_distribution_type";
     public static final String JOIN_MAX_BROADCAST_TABLE_SIZE = "join_max_broadcast_table_size";
     public static final String JOIN_MULTI_CLAUSE_INDEPENDENCE_FACTOR = "join_multi_clause_independence_factor";
@@ -219,7 +218,7 @@ public final class SystemSessionProperties
     public static final String IDLE_WRITER_MIN_DATA_SIZE_THRESHOLD = "idle_writer_min_data_size_threshold";
     public static final String CLOSE_IDLE_WRITERS_TRIGGER_DURATION = "close_idle_writers_trigger_duration";
     public static final String COLUMNAR_FILTER_EVALUATION_ENABLED = "columnar_filter_evaluation_enabled";
-    public static final String SPOOLING_PROTOCOL_ENABLED = "spooling_protocol_enabled";
+    public static final String SPOOLING_ENABLED = "spooling_enabled";
 
     private final List<PropertyMetadata<?>> sessionProperties;
 
@@ -252,11 +251,6 @@ public final class SystemSessionProperties
                         EXECUTION_POLICY,
                         "Policy used for scheduling query tasks",
                         queryManagerConfig.getQueryExecutionPolicy(),
-                        false),
-                booleanProperty(
-                        OPTIMIZE_HASH_GENERATION,
-                        "Compute hash codes for distribution, joins, and aggregations early in query plan",
-                        optimizerConfig.isOptimizeHashGeneration(),
                         false),
                 enumProperty(
                         JOIN_DISTRIBUTION_TYPE,
@@ -1131,7 +1125,7 @@ public final class SystemSessionProperties
                         optimizerConfig.isUnsafePushdownAllowed(),
                         true),
                 booleanProperty(
-                        SPOOLING_PROTOCOL_ENABLED,
+                        SPOOLING_ENABLED,
                         "Enable client spooling protocol",
                         true,
                         true));
@@ -1146,11 +1140,6 @@ public final class SystemSessionProperties
     public static String getExecutionPolicy(Session session)
     {
         return session.getSystemProperty(EXECUTION_POLICY, String.class);
-    }
-
-    public static boolean isOptimizeHashGenerationEnabled(Session session)
-    {
-        return session.getSystemProperty(OPTIMIZE_HASH_GENERATION, Boolean.class);
     }
 
     public static JoinDistributionType getJoinDistributionType(Session session)
@@ -2024,9 +2013,9 @@ public final class SystemSessionProperties
         return session.getSystemProperty(COLUMNAR_FILTER_EVALUATION_ENABLED, Boolean.class);
     }
 
-    public static boolean isSpoolingProtocolEnabled(Session session)
+    public static boolean isSpoolingEnabled(Session session)
     {
-        return session.getSystemProperty(SPOOLING_PROTOCOL_ENABLED, Boolean.class);
+        return session.getSystemProperty(SPOOLING_ENABLED, Boolean.class);
     }
 
     public static boolean isUnsafePushdownAllowed(Session session)

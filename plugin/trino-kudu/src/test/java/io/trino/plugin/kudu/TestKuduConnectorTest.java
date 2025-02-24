@@ -59,7 +59,8 @@ public class TestKuduConnectorTest
     protected boolean hasBehavior(TestingConnectorBehavior connectorBehavior)
     {
         return switch (connectorBehavior) {
-            case SUPPORTS_ARRAY,
+            case SUPPORTS_ADD_COLUMN_WITH_POSITION,
+                 SUPPORTS_ARRAY,
                  SUPPORTS_COMMENT_ON_COLUMN,
                  SUPPORTS_COMMENT_ON_TABLE,
                  SUPPORTS_CREATE_MATERIALIZED_VIEW,
@@ -376,7 +377,7 @@ public class TestKuduConnectorTest
                 "WITH (partition_by_hash_columns = ARRAY['id'], partition_by_hash_buckets = 2)");
         assertThat(getQueryRunner().tableExists(getSession(), tableName)).isTrue();
         assertTableColumnNames(tableName, "id", "a", "b", "c");
-        assertThat(getTableComment(getSession().getCatalog().orElseThrow(), getSession().getSchema().orElseThrow(), tableName)).isNull();
+        assertThat(getTableComment(tableName)).isNull();
 
         assertUpdate("DROP TABLE " + tableName);
         assertThat(getQueryRunner().tableExists(getSession(), tableName)).isFalse();
@@ -979,6 +980,30 @@ public class TestKuduConnectorTest
     public void testUpdateMultipleCondition() {}
 
     /**
+     * The test is overridden because Kudu requires nullable columns to be explicitly specified in the creation statement using `WITH (nullable=true)`.
+     * Additionally, the first column will be the primary key in the table, override to use `regionkey` to test.
+     */
+    @Test
+    @Override
+    public void testUpdateWithNullValues()
+    {
+        withTableName("test_update_nulls", tableName -> {
+            assertUpdate(createKuduTableForWrites("CREATE TABLE %s (nationkey bigint, name varchar(25), regionkey bigint WITH (nullable=true), comment varchar(152))".formatted(tableName)));
+            assertUpdate("INSERT INTO " + tableName + " SELECT * FROM nation", 25);
+
+            assertQuery("SELECT count(*) FROM " + tableName + " WHERE regionkey IS NULL", "VALUES 0");
+            assertUpdate("UPDATE " + tableName + " SET regionkey = NULL WHERE nationkey > 20", 4);
+            assertQuery("SELECT count(*) FROM " + tableName + " WHERE regionkey IS NULL", "VALUES 4");
+
+            // Kudu connector does not have ConnectorCapabilities with `SUPPORTS_NOT_NULL_CONSTRAINT`, but column definition not null by default
+            // Here verify set null to the not null column will fail in Kudu
+            assertThatThrownBy(() -> getQueryRunner().execute("UPDATE " + tableName + " SET nationkey = NULL WHERE nationkey > 20"))
+                    .isInstanceOf(RuntimeException.class)
+                    .hasMessage("nationkey cannot be set to null");
+        });
+    }
+
+    /**
      * This test fails intermittently because Kudu doesn't have strong enough
      * semantics to support writing from multiple threads.
      */
@@ -1044,7 +1069,7 @@ public class TestKuduConnectorTest
 
         assertUpdate("CREATE TABLE " + tableName + " (a bigint WITH (primary_key=true)) COMMENT 'test comment' " +
                 "WITH (partition_by_hash_columns = ARRAY['a'], partition_by_hash_buckets = 2)");
-        assertThat(getTableComment("kudu", "default", tableName)).isEqualTo("test comment");
+        assertThat(getTableComment(tableName)).isEqualTo("test comment");
 
         assertUpdate("DROP TABLE " + tableName);
     }
@@ -1057,7 +1082,7 @@ public class TestKuduConnectorTest
                 "test_create_",
                 "(a bigint WITH (primary_key=true)) COMMENT " + varcharLiteral(comment) +
                         "WITH (partition_by_hash_columns = ARRAY['a'], partition_by_hash_buckets = 2)")) {
-            assertThat(getTableComment("kudu", "default", table.getName())).isEqualTo(comment);
+            assertThat(getTableComment(table.getName())).isEqualTo(comment);
         }
     }
 

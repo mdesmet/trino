@@ -610,7 +610,7 @@ public class TestIcebergSnowflakeCatalogConnectorSmokeTest
     public void testExecuteDelete()
     {
         assertThatThrownBy(() -> assertUpdate("DELETE FROM " + TpchTable.REGION.getTableName()))
-                .hasMessageMatching("Failed to close manifest writer");
+                .hasMessageContaining("Failed to close manifest writer");
     }
 
     @Test
@@ -682,14 +682,6 @@ public class TestIcebergSnowflakeCatalogConnectorSmokeTest
         assertThatThrownBy(() -> assertQuery("SELECT count(*) FROM " + snowflakeNativeTableName))
                 .hasCauseInstanceOf(QueryFailedException.class)
                 .hasRootCauseMessage("SQL compilation error:\ninvalid parameter 'table ? is not a Snowflake iceberg table'");
-    }
-
-    @Test
-    @Override
-    public void testIcebergTablesFunction()
-    {
-        assertThatThrownBy(super::testIcebergTablesFunction)
-                .hasMessageContaining("schemaPath is not supported for Iceberg snowflake catalog");
     }
 
     @Override
