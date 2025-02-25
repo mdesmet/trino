@@ -17,6 +17,9 @@ The protocol is a sequence of REST API calls to the
 6. The client and coordinator continue with steps 4. and 5. until all
    result set data is returned to the client or the client stops requesting
    more data.
+7. If the client fails to fetch the result set, the coordinator does not initiate
+   further processing, fails the query, and returns a `USER_CANCELED` error.
+8. The final response when the query is complete is `FINISHED`.
 
 The client protocol supports two modes. Configure the [spooling
 protocol](protocol-spooling) for optimal throughput for your clients.
@@ -114,6 +117,8 @@ The following client drivers and client applications support the spooling protoc
 
 * [Trino JDBC driver](jdbc-spooling-protocol), version 466 and newer
 * [Trino command line interface](cli-spooling-protocol), version 466 and newer
+* [Trino Python client](https://github.com/trinodb/trino-python-client), version
+  0.332.0 and newer
 
 Refer to the documentation for other your specific client drivers and client
 applications for up to date information.

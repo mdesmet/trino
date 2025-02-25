@@ -29,13 +29,14 @@ import java.net.URI;
 import java.time.ZoneId;
 import java.util.Optional;
 import java.util.OptionalDouble;
+import java.util.OptionalLong;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import static com.google.common.net.HttpHeaders.CONTENT_TYPE;
 import static com.google.common.net.MediaType.JSON_UTF_8;
-import static io.trino.client.JsonCodec.jsonCodec;
 import static io.trino.client.StatementClientFactory.newStatementClient;
+import static io.trino.client.TrinoJsonCodec.jsonCodec;
 import static io.trino.spi.type.StandardTypes.INTEGER;
 import static io.trino.spi.type.StandardTypes.VARCHAR;
 import static java.lang.String.format;
@@ -48,7 +49,7 @@ import static org.junit.jupiter.api.TestInstance.Lifecycle.PER_METHOD;
 public class TestRetry
 {
     private MockWebServer server;
-    private static final JsonCodec<QueryResults> QUERY_RESULTS_CODEC = jsonCodec(QueryResults.class);
+    private static final TrinoJsonCodec<QueryResults> QUERY_RESULTS_CODEC = jsonCodec(QueryResults.class);
 
     @BeforeEach
     public void setup()
@@ -147,7 +148,7 @@ public class TestRetry
                 null,
                 ImmutableList.of(),
                 null,
-                null);
+                OptionalLong.empty());
 
         return QUERY_RESULTS_CODEC.toJson(queryResults);
     }
