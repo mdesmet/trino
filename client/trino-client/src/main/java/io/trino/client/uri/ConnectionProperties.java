@@ -304,7 +304,7 @@ final class ConnectionProperties
             extends AbstractConnectionProperty<String, HostAndPort>
     {
         private static final Validator<Properties> NO_HTTP_PROXY = validator(
-                properties -> !HTTP_PROXY.getValue(properties).isPresent(),
+                properties -> HTTP_PROXY.getValue(properties).isEmpty(),
                 format("Connection property %s cannot be used when %s is set", PropertyName.SOCKS_PROXY, PropertyName.HTTP_PROXY));
 
         public SocksProxy()
@@ -317,7 +317,7 @@ final class ConnectionProperties
             extends AbstractConnectionProperty<String, HostAndPort>
     {
         private static final Validator<Properties> NO_SOCKS_PROXY = validator(
-                properties -> !SOCKS_PROXY.getValue(properties).isPresent(),
+                properties -> SOCKS_PROXY.getValue(properties).isEmpty(),
                 format("Connection property %s cannot be used when %s is set", PropertyName.HTTP_PROXY, PropertyName.SOCKS_PROXY));
 
         public HttpProxy()
@@ -601,14 +601,14 @@ final class ConnectionProperties
         }
     }
 
-    private static Predicate<Properties> isKerberosEnabled()
+    private static boolean isKerberosEnabled(Properties properties)
     {
-        return properties -> KERBEROS_REMOTE_SERVICE_NAME.getValue(properties).isPresent();
+        return KERBEROS_REMOTE_SERVICE_NAME.getValue(properties).isPresent();
     }
 
     private static Validator<Properties> validateKerberosWithoutDelegation(PropertyName propertyName)
     {
-        return validator(isKerberosEnabled(), format("Connection property %s requires %s to be set", propertyName, PropertyName.KERBEROS_REMOTE_SERVICE_NAME))
+        return validator(ConnectionProperties::isKerberosEnabled, format("Connection property %s requires %s to be set", propertyName, PropertyName.KERBEROS_REMOTE_SERVICE_NAME))
                 .and(validator(
                         properties -> !KERBEROS_DELEGATION.getValueOrDefault(properties, false),
                         format("Connection property %s cannot be set if %s is enabled", propertyName, PropertyName.KERBEROS_DELEGATION)));
@@ -616,7 +616,7 @@ final class ConnectionProperties
 
     private static Validator<Properties> validateKerberosWithDelegation(PropertyName propertyName)
     {
-        return validator(isKerberosEnabled(), format("Connection property %s requires %s to be set", propertyName, PropertyName.KERBEROS_REMOTE_SERVICE_NAME))
+        return validator(ConnectionProperties::isKerberosEnabled, format("Connection property %s requires %s to be set", propertyName, PropertyName.KERBEROS_REMOTE_SERVICE_NAME))
                 .and(validator(
                         properties -> KERBEROS_DELEGATION.getValueOrDefault(properties, false),
                         format("Connection property %s requires %s to be enabled", propertyName, PropertyName.KERBEROS_DELEGATION)));
@@ -627,7 +627,7 @@ final class ConnectionProperties
     {
         public KerberosServicePrincipalPattern()
         {
-            super(PropertyName.KERBEROS_SERVICE_PRINCIPAL_PATTERN, Optional.of("${SERVICE}@${HOST}"), isKerberosEnabled(), ALLOWED, STRING_CONVERTER);
+            super(PropertyName.KERBEROS_SERVICE_PRINCIPAL_PATTERN, Optional.of("${SERVICE}@${HOST}"), ConnectionProperties::isKerberosEnabled, ALLOWED, STRING_CONVERTER);
         }
     }
 
@@ -645,7 +645,7 @@ final class ConnectionProperties
     {
         public KerberosUseCanonicalHostname()
         {
-            super(PropertyName.KERBEROS_USE_CANONICAL_HOSTNAME, Optional.of(true), isKerberosEnabled(), ALLOWED, BOOLEAN_CONVERTER);
+            super(PropertyName.KERBEROS_USE_CANONICAL_HOSTNAME, Optional.of(true), ConnectionProperties::isKerberosEnabled, ALLOWED, BOOLEAN_CONVERTER);
         }
     }
 
@@ -681,7 +681,7 @@ final class ConnectionProperties
     {
         public KerberosDelegation()
         {
-            super(PropertyName.KERBEROS_DELEGATION, Optional.of(false), isKerberosEnabled(), ALLOWED, BOOLEAN_CONVERTER);
+            super(PropertyName.KERBEROS_DELEGATION, Optional.of(false), ConnectionProperties::isKerberosEnabled, ALLOWED, BOOLEAN_CONVERTER);
         }
     }
 

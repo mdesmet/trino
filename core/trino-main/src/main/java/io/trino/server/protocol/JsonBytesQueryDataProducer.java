@@ -17,7 +17,6 @@ import io.trino.Session;
 import io.trino.client.QueryData;
 import io.trino.server.ExternalUriInfo;
 import io.trino.server.protocol.JsonEncodingUtils.TypeEncoder;
-import io.trino.server.protocol.spooling.QueryDataProducer;
 import io.trino.spi.TrinoException;
 
 import java.util.List;
@@ -39,9 +38,7 @@ public class JsonBytesQueryDataProducer
             return null;
         }
 
-        List<OutputColumn> columns = rows.getOutputColumns()
-                .orElseThrow(() -> new IllegalStateException("Data present without columns"));
-
+        List<OutputColumn> columns = rows.getOutputColumns();
         if (typeEncoders == null) {
             typeEncoders = createTypeEncoders(session, columns);
             sourcePageChannels = requireNonNull(columns, "columns is null").stream()

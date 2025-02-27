@@ -45,7 +45,7 @@ standaloneFunctionSpecification
     ;
 
 statement
-    : rootQuery                                                        #statementDefault
+    : rootQueryWithSession                                             #statementDefault
     | USE schema=identifier                                            #use
     | USE catalog=identifier '.' schema=identifier                     #use
     | CREATE CATALOG (IF NOT EXISTS)? catalog=identifier
@@ -80,7 +80,8 @@ statement
     | ALTER TABLE (IF EXISTS)? from=qualifiedName
         RENAME TO to=qualifiedName                                     #renameTable
     | ALTER TABLE (IF EXISTS)? tableName=qualifiedName
-        ADD COLUMN (IF NOT EXISTS)? column=columnDefinition            #addColumn
+        ADD COLUMN (IF NOT EXISTS)? column=columnDefinition
+        (FIRST | LAST | AFTER after=identifier)?                       #addColumn
     | ALTER TABLE (IF EXISTS)? tableName=qualifiedName
         RENAME COLUMN (IF EXISTS)? from=qualifiedName TO to=identifier #renameColumn
     | ALTER TABLE (IF EXISTS)? tableName=qualifiedName
@@ -199,11 +200,17 @@ statement
     ;
 
 rootQuery
-    : withFunction? query
+    : (WITH functionSpecification (',' functionSpecification)*)?
+      query
     ;
 
-withFunction
-    : WITH functionSpecification (',' functionSpecification)*
+rootQueryWithSession
+    : (WITH SESSION sessionProperty (',' sessionProperty)*)?
+      rootQuery
+    ;
+
+sessionProperty
+    : qualifiedName EQ expression
     ;
 
 query
