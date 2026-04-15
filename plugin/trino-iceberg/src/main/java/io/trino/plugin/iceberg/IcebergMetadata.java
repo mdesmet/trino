@@ -776,7 +776,7 @@ public class IcebergMetadata
             return Optional.empty();
         }
         PartitionSpec partitionSpec = icebergTable.spec();
-        if (partitionSpec.fields().isEmpty()) {
+        if (partitionSpec.isUnpartitioned()) {
             return Optional.empty();
         }
 
@@ -1659,7 +1659,7 @@ public class IcebergMetadata
                     .withSortOrder(sortOrders.get(task.sortOrderId()));
             task.fileSplitOffsets().ifPresent(builder::withSplitOffsets);
 
-            if (!partitionSpec.fields().isEmpty()) {
+            if (partitionSpec.isPartitioned()) {
                 String partitionDataJson = task.partitionDataJson()
                         .orElseThrow(() -> new VerifyException("No partition data for partitioned table"));
                 builder.withPartition(PartitionData.fromJson(partitionDataJson, partitionSpec));
@@ -2112,7 +2112,7 @@ public class IcebergMetadata
                     .withSortOrder(sortOrders.get(task.sortOrderId()));
             task.fileSplitOffsets().ifPresent(builder::withSplitOffsets);
 
-            if (!partitionSpec.fields().isEmpty()) {
+            if (partitionSpec.isPartitioned()) {
                 String partitionDataJson = task.partitionDataJson()
                         .orElseThrow(() -> new VerifyException("No partition data for partitioned table"));
                 builder.withPartition(PartitionData.fromJson(partitionDataJson, partitionSpec));
@@ -3309,7 +3309,7 @@ public class IcebergMetadata
                     .withSortOrder(sortOrders.get(task.sortOrderId()));
             task.fileSplitOffsets().ifPresent(builder::withSplitOffsets);
 
-            if (!icebergTable.spec().fields().isEmpty()) {
+            if (partitionSpec.isPartitioned()) {
                 String partitionDataJson = task.partitionDataJson()
                         .orElseThrow(() -> new VerifyException("No partition data for partitioned table"));
                 builder.withPartition(PartitionData.fromJson(partitionDataJson, partitionSpec));
@@ -3341,7 +3341,7 @@ public class IcebergMetadata
                         .withFileSizeInBytes(task.fileSizeInBytes())
                         .withMetrics(task.metrics().metrics());
                 task.fileSplitOffsets().ifPresent(deleteBuilder::withSplitOffsets);
-                if (!partitionSpec.fields().isEmpty()) {
+                if (partitionSpec.isPartitioned()) {
                     deleteBuilder.withPartition(PartitionData.fromJson(
                             task.partitionDataJson().orElseThrow(() -> new VerifyException("No partition data for partitioned table")),
                             partitionSpec));
@@ -3357,7 +3357,7 @@ public class IcebergMetadata
         List<DeletionVectorInfo> deletionVectorInfos = deleteTasks.stream()
                 .map(task -> {
                     PartitionSpec partitionSpec = PartitionSpecParser.fromJson(schema, task.partitionSpecJson());
-                    Optional<PartitionData> partitionData = !partitionSpec.fields().isEmpty()
+                    Optional<PartitionData> partitionData = partitionSpec.isPartitioned()
                             ? Optional.of(PartitionData.fromJson(
                             task.partitionDataJson().orElseThrow(() -> new VerifyException("No partition data for partitioned table")),
                             partitionSpec))
@@ -3951,7 +3951,7 @@ public class IcebergMetadata
                     .withSortOrder(sortOrders.get(task.sortOrderId()));
             task.fileSplitOffsets().ifPresent(builder::withSplitOffsets);
 
-            if (!partitionSpec.fields().isEmpty()) {
+            if (partitionSpec.isPartitioned()) {
                 String partitionDataJson = task.partitionDataJson()
                         .orElseThrow(() -> new VerifyException("No partition data for partitioned table"));
                 builder.withPartition(PartitionData.fromJson(partitionDataJson, partitionSpec));
